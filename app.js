@@ -1,3 +1,6 @@
+// server.js OR app.js
+import 'dotenv/config';  // <-- MUST be first
+
 import express from "express";
 import stripeRoutes from "./routes/stripe.routes.js";
 import walletRoutes from "./routes/wallet.routes.js";
