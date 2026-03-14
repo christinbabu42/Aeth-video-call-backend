@@ -1,5 +1,5 @@
 // controllers/stripe.controller.js
-import stripe from "../config/stripe.js";  // <-- Only import from config
+import stripe from "../config/stripe.js";  // ✅ use this ONLY
 import { creditWallet } from "../services/wallet.service";
 import { getRateCoinConfig } from "../config/RateCoinConfig";
 
