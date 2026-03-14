@@ -1,13 +1,8 @@
 // controllers/stripe.controller.js
-import stripe from "../config/stripe.js";  // ✅ use this ONLY
-import { creditWallet } from "../services/wallet.service";
-import { getRateCoinConfig } from "../config/RateCoinConfig";
-
-const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
-const { creditWallet } = require("../services/wallet.service");
-const CoinPack = require("../models/CoinPack");
-const { getRateCoinConfig } = require("../config/RateCoinConfig");
-
+import stripe from "../config/stripe.js";  // ✅ only import stripe
+import { creditWallet } from "../services/wallet.service.js";  // ✅ only import once
+import { getRateCoinConfig } from "../config/RateCoinConfig.js";  // ✅ only import once
+import CoinPack from "../models/CoinPack.js"; // if needed
 
 
 exports.createPaymentIntent = async (req, res) => {
