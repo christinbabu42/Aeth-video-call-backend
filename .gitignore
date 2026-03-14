@@ -1,6 +1,5 @@
 node_modules
 .env
 *.pem
-*.json
 serviceAccountKey.json
 firebase-admin.json

@@ -1,0 +1,32 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "18": "^0.0.0",
+    "@aws-sdk/client-rekognition": "^3.995.0",
+    "@socket.io/redis-adapter": "^8.3.0",
+    "agora-access-token": "^2.0.4",
+    "axios": "^1.13.2",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "google-auth-library": "^10.5.0",
+    "jsonwebtoken": "^9.0.3",
+    "livekit-server-sdk": "^2.15.0",
+    "mongoose": "^9.1.1",
+    "multer": "^2.0.2",
+    "nanoid": "^5.1.6",
+    "node-cron": "^4.2.1",
+    "redis": "^5.10.0",
+    "socket.io": "^4.8.3",
+    "stripe": "^20.3.0"
+  }
+}
