@@ -1,30 +1,24 @@
 // controllers/stripe.controller.js
-import stripe from "../config/stripe.js";  // ✅ only import stripe
-import { creditWallet } from "../services/wallet.service.js";  // ✅ only import once
-import { getRateCoinConfig } from "../config/RateCoinConfig.js";  // ✅ only import once
+import stripe from "../config/stripe.js";  
+import { creditWallet } from "../services/wallet.service.js";  
+import { getRateCoinConfig } from "../config/RateCoinConfig.js";  
 import CoinPack from "../models/CoinPack.js"; // if needed
 
-
-exports.createPaymentIntent = async (req, res) => {
+// ✅ ES Module exports
+export const createPaymentIntent = async (req, res) => {
   try {
     const { coins } = req.body; 
     const userId = req.user.id;
 
-    // ✅ Validate coin input
     if (!coins || coins <= 0) {
       return res.status(400).json({ error: "Invalid coin amount" });
     }
 
-    // ✅ 🔹 NEW LOGIC: Use server-side rate config instead of CoinPack
     const rateConfig = await getRateCoinConfig(); 
-    
-    // ✅ Calculate amount securely based on the central rate (using userCoinValue)
-    // Formula: (Number of Coins) * (Price per Coin for Users)
     const amountInRupees = Math.round(coins * rateConfig.userCoinValue);
 
-    // ✅ Create Stripe Payment Intent
     const paymentIntent = await stripe.paymentIntents.create({
-      amount: amountInRupees * 100, // Stripe expects paise (INR * 100)
+      amount: amountInRupees * 100,
       currency: "inr",
       metadata: {
         userId: userId.toString(),
@@ -32,10 +26,7 @@ exports.createPaymentIntent = async (req, res) => {
       },
     });
 
-    // ✅ Log keeping your old format
-    console.log(
-      `✨ [Controller] Intent Created: ${paymentIntent.id} for User: ${userId}`
-    );
+    console.log(`✨ [Controller] Intent Created: ${paymentIntent.id} for User: ${userId}`);
 
     res.json({
       clientSecret: paymentIntent.client_secret,
@@ -48,19 +39,17 @@ exports.createPaymentIntent = async (req, res) => {
   }
 };
 
-exports.verifyPayment = async (req, res) => {
+export const verifyPayment = async (req, res) => {
   try {
     const { paymentIntentId } = req.body;
     const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
-    const io = req.app.get("socketio"); // ✅ Get io instance
+    const io = req.app.get("socketio");
 
     if (intent.status !== "succeeded") {
       return res.status(400).json({ error: "Payment not completed" });
     }
 
     console.log(`🔍 [Verify Route] Handing off to WalletService for TX: ${paymentIntentId}`);
-
-    // ✅ Clean Refactor: One call handles everything
     const result = await creditWallet(intent, io);
 
     if (!result) {
