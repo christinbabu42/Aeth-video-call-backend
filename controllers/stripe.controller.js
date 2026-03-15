@@ -1,20 +1,19 @@
-// controllers/stripe.controller.js
-import stripe from "../config/stripe.js";  
-import { creditWallet } from "../services/wallet.service.js";  
-import { getRateCoinConfig } from "../config/RateCoinConfig.js";  
-import CoinPack from "../models/CoinPack.js"; // if needed
+const stripe = require("../config/stripe");
+const { creditWallet } = require("../services/wallet.service");
+const { getRateCoinConfig } = require("../config/RateCoinConfig");
+const CoinPack = require("../models/CoinPack");
 
-// ✅ ES Module exports
-export const createPaymentIntent = async (req, res) => {
+// Create payment intent
+exports.createPaymentIntent = async (req, res) => {
   try {
-    const { coins } = req.body; 
+    const { coins } = req.body;
     const userId = req.user.id;
 
     if (!coins || coins <= 0) {
       return res.status(400).json({ error: "Invalid coin amount" });
     }
 
-    const rateConfig = await getRateCoinConfig(); 
+    const rateConfig = await getRateCoinConfig();
     const amountInRupees = Math.round(coins * rateConfig.userCoinValue);
 
     const paymentIntent = await stripe.paymentIntents.create({
@@ -26,7 +25,7 @@ export const createPaymentIntent = async (req, res) => {
       },
     });
 
-    console.log(`✨ [Controller] Intent Created: ${paymentIntent.id} for User: ${userId}`);
+    console.log(`✨ Intent Created: ${paymentIntent.id}`);
 
     res.json({
       clientSecret: paymentIntent.client_secret,
@@ -34,14 +33,17 @@ export const createPaymentIntent = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("❌ [Controller] Create Error:", error.message);
+    console.error("Create Error:", error.message);
     res.status(500).json({ error: error.message });
   }
 };
 
-export const verifyPayment = async (req, res) => {
+
+// Verify payment
+exports.verifyPayment = async (req, res) => {
   try {
     const { paymentIntentId } = req.body;
+
     const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
     const io = req.app.get("socketio");
 
@@ -49,18 +51,20 @@ export const verifyPayment = async (req, res) => {
       return res.status(400).json({ error: "Payment not completed" });
     }
 
-    console.log(`🔍 [Verify Route] Handing off to WalletService for TX: ${paymentIntentId}`);
+    console.log(`Verifying payment: ${paymentIntentId}`);
+
     const result = await creditWallet(intent, io);
 
     if (!result) {
-        console.log("ℹ️ [Verify Route] Already handled by Webhook.");
+      console.log("Already processed by webhook");
     } else {
-        console.log(`✅ [Verify Route] DB Updated. New Balance: ${result.coins}`);
+      console.log(`Wallet credited. Balance: ${result.coins}`);
     }
 
     res.json({ success: true });
+
   } catch (error) {
-    console.error("❌ [Verify Route] Error:", error.message);
+    console.error("Verify Error:", error.message);
     res.status(500).json({ error: error.message });
   }
 };
