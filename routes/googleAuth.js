@@ -41,6 +41,7 @@ router.post("/google", async (req, res) => {
       audience: [
         process.env.GOOGLE_WEB_CLIENT_ID,
         process.env.GOOGLE_ANDROID_CLIENT_ID,
+        process.env.GOOGLE_ANDROID_DEBUG_CLIENT_ID,
         process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
       ],
     });
