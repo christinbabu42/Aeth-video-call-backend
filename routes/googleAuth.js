@@ -26,6 +26,7 @@ const getCountryFromIP = async (ip) => {
  * POST /api/auth/google
  */
 router.post("/google", async (req, res) => {
+  console.log("Incoming Request Body:", req.body); // Add this
   console.log("🔥 Google auth hit");
 
   try {

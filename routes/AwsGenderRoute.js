@@ -7,8 +7,9 @@ const {
 } = require("@aws-sdk/client-rekognition");
 
 
-console.log("ACCESS:", process.env.AWS_Rekognition_Access_key);
-console.log("SECRET:", process.env.AWS_Rekognition_Secret_access_key);
+// Correct code (Uppercase matches your .env)
+console.log("ACCESS:", process.env.AWS_Rekognition_ACCESS_KEY);
+console.log("SECRET:", process.env.AWS_Rekognition_SECRET_ACCESS_KEY);
 
 // memory storage (no file save)
 const upload = multer({ storage: multer.memoryStorage() });
@@ -17,8 +18,8 @@ const upload = multer({ storage: multer.memoryStorage() });
 const client = new RekognitionClient({
   region: "ap-south-1",
   credentials: {
-    accessKeyId: process.env.AWS_Rekognition_Access_key,
-    secretAccessKey: process.env.AWS_Rekognition_Secret_access_key, // ✅ FIXED
+    accessKeyId: process.env.AWS_Rekognition_ACCESS_KEY,
+    secretAccessKey: process.env.AWS_Rekognition_SECRET_ACCESS_KEY,
   },
 });
 
