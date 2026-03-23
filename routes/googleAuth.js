@@ -7,7 +7,7 @@ const User = require("../models/User");
 const router = express.Router();
 
 // ✅ Initialize OAuth Client
-const client = new OAuth2Client();
+const client = new OAuth2Client(process.env.GOOGLE_WEB_CLIENT_ID);
 
 // ✅ ADMIN CONFIGURATION
 const SUPERADMIN_EMAIL = "christinbabu42@gmail.com";
@@ -37,15 +37,10 @@ router.post("/google", async (req, res) => {
     }
 
     // ✅ Verify Token for Web, Android, and Expo
-    const ticket = await client.verifyIdToken({
-      idToken,
-      audience: [
-        process.env.GOOGLE_WEB_CLIENT_ID,
-        process.env.GOOGLE_ANDROID_CLIENT_ID,
-        process.env.GOOGLE_ANDROID_DEBUG_CLIENT_ID,
-        process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
-      ],
-    });
+const ticket = await client.verifyIdToken({
+  idToken,
+  audience: process.env.GOOGLE_WEB_CLIENT_ID,
+});
 
     const payload = ticket.getPayload();
 

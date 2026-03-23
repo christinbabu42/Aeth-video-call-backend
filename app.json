@@ -4,6 +4,9 @@
       "eas": {
         "projectId": "63b4769b-0389-4936-925e-69bbfdb2f21e"
       }
+    },
+    "android": {
+      "package": "com.christinbabu42.backend"
     }
   }
 }
