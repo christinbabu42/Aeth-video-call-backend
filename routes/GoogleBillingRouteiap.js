@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const User = require("../models/User");
 const Transaction = require("../models/Transaction");
+const Wallet = require("../models/Wallet");
 const authMiddleware = require("../middlewares/auth");
 
 const COIN_PACKS = {
@@ -34,7 +35,7 @@ router.post("/verify-purchase-mock", async (req, res) => {
   });
 });
 
-// 💰 POST: Main Verification (Requires Auth)
+// 💰 POST: Main Verification (Updated to sync with Wallet Schema)
 router.post("/verify-purchase", authMiddleware, async (req, res) => {
   const { purchaseToken, productId } = req.body;
   const userId = req.user.id;
@@ -48,14 +49,18 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
       const pack = COIN_PACKS[productId];
       if (!pack) return res.status(400).json({ success: false, message: "Invalid SKU" });
 
-      const updatedUser = await User.findByIdAndUpdate(
-        userId, 
-        { $inc: { coins: pack.coins } }, 
-        { new: true }
+      // 🔄 UPDATE THE WALLET MODEL (instead of User model)
+      // upsert: true ensures a wallet is created if it doesn't exist
+      const updatedWallet = await Wallet.findOneAndUpdate(
+        { userId: userId },
+        { $inc: { coins: pack.coins } },
+        { new: true, upsert: true }
       );
 
+      // Record the transaction for history
       await Transaction.create({
         user: userId,
+        userId: userId, // Ensure this matches your Transaction schema field
         type: "purchase",
         coins: pack.coins,
         amountPaid: pack.price,
@@ -68,11 +73,11 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
       
       return res.json({ 
         success: true, 
-        newBalance: updatedUser.coins 
+        newBalance: updatedWallet.coins 
       });
     }
-    // Real verification logic would go here
   } catch (error) {
+    console.error("IAP Error:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
