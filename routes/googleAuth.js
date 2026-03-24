@@ -15,7 +15,9 @@ const SUPERADMIN_EMAIL = "christinbabu42@gmail.com";
 // ✅ GET COUNTRY FROM IP
 const getCountryFromIP = async (ip) => {
   try {
-    const res = await axios.get(`https://ipapi.co/${ip}/json/`);
+    // Standardizing localhost IP for ipapi compatibility
+    const cleanIp = (ip === "::1" || ip === "127.0.0.1") ? "" : ip;
+    const res = await axios.get(`https://ipapi.co/${cleanIp}/json/`);
     return res.data.country_name || null;
   } catch (err) {
     return null;
@@ -26,23 +28,36 @@ const getCountryFromIP = async (ip) => {
  * POST /api/auth/google
  */
 router.post("/google", async (req, res) => {
-  console.log("Incoming Request Body:", req.body); // Add this
+  console.log("Incoming Request Body:", req.body);
   console.log("🔥 Google auth hit");
 
   try {
-    const { idToken } = req.body;
+    const { idToken, accessToken, isAdminLogin } = req.body;
 
-    if (!idToken) {
-      return res.status(400).json({ message: "Staff ID Token required" });
+    if (!idToken && !accessToken) {
+      return res.status(400).json({ message: "Staff Token (ID or Access) required" });
     }
 
-    // ✅ Verify Token for Web, Android, and Expo
-const ticket = await client.verifyIdToken({
-  idToken,
-  audience: process.env.GOOGLE_WEB_CLIENT_ID,
-});
+    let payload;
 
-    const payload = ticket.getPayload();
+    // ✅ HYBRID VERIFICATION LOGIC
+    if (idToken) {
+      // Logic for standard JWT ID Tokens
+      const ticket = await client.verifyIdToken({
+        idToken,
+        audience: process.env.GOOGLE_WEB_CLIENT_ID,
+      });
+      payload = ticket.getPayload();
+    } else if (accessToken) {
+      // Logic for 'ya29...' style Access Tokens
+      const googleRes = await axios.get(
+        `https://www.googleapis.com/oauth2/v1/userinfo?alt=json&access_token=${accessToken}`
+      );
+      payload = googleRes.data;
+      // Map googleapis field names to match verifyIdToken payload names
+      payload.sub = payload.id; 
+      payload.picture = payload.picture;
+    }
 
     // ✅ GET USER IP + COUNTRY
     const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.socket.remoteAddress;
@@ -60,7 +75,6 @@ const ticket = await client.verifyIdToken({
     }
 
     // 🚫 2️⃣ BLOCK BANNED / SUSPENDED USERS
-    // We check if user exists and their status is not active. Superadmin bypasses this.
     if (
       user &&
       user.actionstatus !== "active" &&
@@ -85,18 +99,16 @@ const ticket = await client.verifyIdToken({
         status: "online",
         lastSeen: new Date(),
         nation: detectedCountry,
-        role: payload.email === SUPERADMIN_EMAIL ? "superadmin" : "user", // ✅ Assign role on creation
+        role: payload.email === SUPERADMIN_EMAIL ? "superadmin" : "user",
       });
     } else {
       user.name = payload.name;
-      // ✅ Only set Google picture if user does NOT have custom one
       if (!user.profilePic) {
         user.profilePic = payload.picture;
       }
       user.status = "online";
       user.lastSeen = new Date();
       
-      // Update role if it's the admin logging in
       if (user.email === SUPERADMIN_EMAIL) user.role = "superadmin";
       
       if (!user.nation && detectedCountry) user.nation = detectedCountry;
@@ -104,8 +116,9 @@ const ticket = await client.verifyIdToken({
     }
 
     // ✅ ADMIN LOGIN CHECK (ONLY FOR ADMIN PANEL)
-    if (req.body.isAdminLogin) {
-      const isAdmin = ["admin", "superadmin", "support", "finance"].includes(user.role);
+    const adminRoles = ["admin", "superadmin", "support", "finance"];
+    if (isAdminLogin) {
+      const isAdmin = adminRoles.includes(user.role);
 
       if (!isAdmin) {
         return res.status(403).json({
@@ -125,7 +138,7 @@ const ticket = await client.verifyIdToken({
       { 
         id: user._id, 
         email: user.email, 
-        role: user.role // ✅ Important: Include role in token
+        role: user.role 
       },
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
@@ -136,11 +149,11 @@ const ticket = await client.verifyIdToken({
       token,
       user,
       isOnboarded,
-      isAdmin: ["admin", "superadmin", "support", "finance"].includes(user.role),
+      isAdmin: adminRoles.includes(user.role),
     });
   } catch (error) {
-    console.error("Google Auth Error:", error);
-    res.status(401).json({ message: "Invalid Google token" });
+    console.error("Google Auth Error:", error.response?.data || error.message);
+    res.status(401).json({ message: "Invalid Google token or session" });
   }
 });
 
