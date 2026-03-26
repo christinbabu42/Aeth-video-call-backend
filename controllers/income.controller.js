@@ -1,4 +1,6 @@
 const Income = require("../models/Income");
+// Ensure you import your config to access hostCoinValue
+const config = require("../config/RateCoinConfig"); 
 
 exports.getIncome = async (req, res) => {
   try {
@@ -28,11 +30,18 @@ exports.getIncome = async (req, res) => {
       if (item.type === "live") breakdown.live += item.amount;
     });
 
+    // Sort history by date descending
+    const sortedHistory = income.history.sort((a, b) => b.createdAt - a.createdAt);
+
     res.status(200).json({
       success: true,
       totalEarnings: income.totalEarnings,
       breakdown,
-      history: income.history.sort((a, b) => b.createdAt - a.createdAt)
+      history: sortedHistory.map(item => ({
+        ...item._doc,
+        // 🔥 Dynamically calculate rupees based on current backend rate
+        rupees: item.amount * (config.hostCoinValue || 0.45) 
+      }))
     });
 
   } catch (error) {

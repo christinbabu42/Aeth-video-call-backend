@@ -20,6 +20,7 @@
 
     history: [{
       amount: { type: Number, required: true },
+      rupees: { type: Number }, // ✅ ADD THIS
       description: { type: String },
       // Added 'live' to the enum to match your frontend breakdown
       type: { 

@@ -1,25 +1,17 @@
-const stripe = require("../config/stripe");
-
-const COIN_TO_RUPEE = 0.62;
+const { getRateCoinConfig } = require("../config/RateCoinConfig");
 
 exports.payoutToUser = async ({ coins, stripeAccountId }) => {
-  const amount = Math.floor(coins * COIN_TO_RUPEE * 100); // paise
+  const rateConfig = await getRateCoinConfig();
 
-  // 1️⃣ Transfer from platform → connected account
-  await stripe.transfers.create({
-    amount,
-    currency: "inr",
-    destination: stripeAccountId
-  });
+  const amount = Math.floor(coins * rateConfig.hostCoinValue * 100);
 
-  // 2️⃣ Payout to bank (TEST MODE)
   await stripe.payouts.create(
     {
       amount,
-      currency: "inr"
+      currency: "inr",
     },
     {
-      stripeAccount: stripeAccountId
+      stripeAccount: stripeAccountId,
     }
   );
 

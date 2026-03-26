@@ -109,13 +109,14 @@ const endCallAndCreditIncome = async (callId, io) => {
       if (!alreadyExists) {
         // Use precision to update totalEarnings
         income.totalEarnings = Number((income.totalEarnings + call.hostEarnings).toFixed(2));
-        income.history.push({
-          amount: call.hostEarnings,
-          description: `Call Earnings - ${call._id}`,
-          type: "call",
-          status: "completed",
-          createdAt: new Date()
-        });
+income.history.push({
+  amount: call.hostEarnings,
+  rupees: call.hostEarningsInRupees, // ✅ ADD THIS
+  description: `Call Earnings - ${call._id}`,
+  type: "call",
+  status: "completed",
+  createdAt: new Date()
+});
         await income.save();
       }
 
@@ -128,7 +129,12 @@ const endCallAndCreditIncome = async (callId, io) => {
       }
 
       // Update Earner (Female) Income UI
-      io.to(String(earningUserId)).emit("incomeUpdated", { totalEarnings: income.totalEarnings });
+io.to(String(earningUserId)).emit("incomeUpdated", { 
+  totalEarnings: income.totalEarnings,
+  lastEarningCoins: call.hostEarnings,
+  lastEarningRupees: call.hostEarningsInRupees,
+  hostCoinValue: HOST_COIN_VALUE   // optional
+});
     }
 
     // 5. Force Call Termination on Client Side

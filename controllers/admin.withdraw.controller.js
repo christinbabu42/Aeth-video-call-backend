@@ -22,6 +22,7 @@ exports.getPendingWithdrawals = async (req, res) => {
         name: income.userId.name,
         email: income.userId.email,
         coins: withdrawal.amount,
+        rupees: withdrawal.amount * rateConfig.hostCoinValue, // ✅ add this
         createdAt: withdrawal.createdAt
       };
     });
@@ -57,20 +58,30 @@ exports.approveWithdrawal = async (req, res) => {
     }
 
     // 🔁 STRIPE MODE
-    if (process.env.PAYOUT_MODE === "stripe") {
-      if (!user.stripeAccountId) {
-        return res.status(400).json({
-          message: "Stripe onboarding not completed"
-        });
-      }
+if (process.env.PAYOUT_MODE === "stripe") {
+  if (!user.stripeAccountId) {
+    return res.status(400).json({
+      message: "Stripe onboarding not completed"
+    });
+  }
 
-      await payoutToUser({
-        coins: withdrawal.amount,
-        stripeAccountId: user.stripeAccountId
-      });
+  try {
+    await payoutToUser({
+      coins: withdrawal.amount,
+      stripeAccountId: user.stripeAccountId
+    });
 
-      withdrawal.description = "Paid via Stripe";
-    }
+    withdrawal.description = "Paid via Stripe";
+
+  } catch (err) {
+    console.error("❌ Stripe payout failed:", err.message);
+
+    return res.status(500).json({
+      message: "Stripe payout failed",
+      error: err.message
+    });
+  }
+}
 
     // ✋ MANUAL MODE
     if (process.env.PAYOUT_MODE === "manual") {
