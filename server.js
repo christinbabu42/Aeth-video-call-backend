@@ -77,6 +77,7 @@ app.use("/api/admin/delete", require("./routes/adminDeleteRoute.js"));
 app.use("/api/admin/video", require("./routes/adminVideoRoute"));
 app.use("/agora", require("./routes/agoraTokenRoute.js"));
 app.use("/api/iap",require("./routes/GoogleBillingRouteiap.js"));
+app.use("/api/user",require("./routes/bankRoutes.js"));
 
 
 

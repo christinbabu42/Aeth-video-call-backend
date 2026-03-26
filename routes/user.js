@@ -416,5 +416,9 @@ router.put("/update-rate", auth, requireOnboarding, async (req, res) => {
   }
 });
 
+// 📁 routes/userRoutes.js
+
+router.post("/bank-details", authMiddleware, updateBankDetails);
+
 
 module.exports = router;
