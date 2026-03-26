@@ -5,27 +5,22 @@ const admin = require("../middlewares/admin");
 const {
   getPendingWithdrawals,
   approveWithdrawal,
+  completeWithdrawal,
   rejectWithdrawal
 } = require("../controllers/admin.withdraw.controller");
 
 const router = express.Router();
 
-// Get all pending withdrawals
+// ✅ Get all withdrawals (pending + processing)
 router.get("/pending", auth, admin, getPendingWithdrawals);
 
-// Approve withdrawal
-router.post(
-  "/approve/:userId",
-  auth,
-  admin,
-  (req, res, next) => {
-    next();
-  },
-  approveWithdrawal
-);
+// ✅ STEP 1: Approve → pending → processing
+router.post("/approve/:userId", auth, admin, approveWithdrawal);
 
+// ✅ STEP 2: Complete → processing → completed
+router.post("/complete/:userId", auth, admin, completeWithdrawal);
 
-// Reject withdrawal
+// ❌ STEP 3: Reject → refund coins
 router.post("/reject/:userId", auth, admin, rejectWithdrawal);
 
 module.exports = router;

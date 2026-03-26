@@ -1,134 +1,124 @@
 const Income = require("../models/Income");
 const User = require("../models/User");
-const { payoutToUser } = require("../services/stripePayout.service");
+const { getRateCoinConfig } = require("../config/RateCoinConfig");
 
 /**
- * GET all pending withdrawals
+ * GET all withdrawals (Pending & Processing)
  */
 exports.getPendingWithdrawals = async (req, res) => {
   try {
+    const rateConfig = await getRateCoinConfig();
     const users = await Income.find({
       "history.type": "withdrawal",
-      "history.status": "pending"
-    }).populate("userId", "name email");
+      "history.status": { $in: ["pending", "processing"] } // Fetch both
+    }).populate("userId", "name email upiId bankDetails paypalEmail country");
 
-    const pending = users.map(income => {
-      const withdrawal = income.history.find(
-        h => h.type === "withdrawal" && h.status === "pending"
+    const pending = [];
+    users.forEach(income => {
+      const activeWithdrawals = income.history.filter(
+        h => h.type === "withdrawal" && (h.status === "pending" || h.status === "processing")
       );
 
-      return {
-        userId: income.userId._id,
-        name: income.userId.name,
-        email: income.userId.email,
-        coins: withdrawal.amount,
-        rupees: withdrawal.amount * rateConfig.hostCoinValue, // ✅ add this
-        createdAt: withdrawal.createdAt
-      };
+      activeWithdrawals.forEach(withdrawal => {
+        pending.push({
+          withdrawalId: withdrawal._id,
+          userId: income.userId._id,
+          name: income.userId.name,
+          email: income.userId.email,
+          coins: withdrawal.amount,
+          status: withdrawal.status, // ✅ Added status
+          rupees: (withdrawal.amount * rateConfig.hostCoinValue).toFixed(2),
+          createdAt: withdrawal.createdAt,
+          upiId: income.userId.upiId,
+          bankDetails: income.userId.bankDetails,
+          paypalEmail: income.userId.paypalEmail
+        });
+      });
     });
 
     res.json({ success: true, pending });
   } catch (err) {
-    console.error("Admin Withdraw Fetch Error:", err);
     res.status(500).json({ success: false });
   }
 };
 
 /**
- * APPROVE withdrawal
+ * STEP 5: APPROVE -> Move to "processing"
  */
+// 📁 backend/controllers/withdrawController.js
+
 exports.approveWithdrawal = async (req, res) => {
-
   try {
-    const { userId } = req.params;
+    const { withdrawalId } = req.params;
 
-    const income = await Income.findOne({ userId });
-    const user = await User.findById(userId);
-
-    if (!income || !user) {
-      return res.status(404).json({ message: "User/Income not found" });
-    }
-
-    const withdrawal = income.history.find(
-      h => h.type === "withdrawal" && h.status === "pending"
-    );
-
-    if (!withdrawal) {
-      return res.status(400).json({ message: "No pending withdrawal" });
-    }
-
-    // 🔁 STRIPE MODE
-if (process.env.PAYOUT_MODE === "stripe") {
-  if (!user.stripeAccountId) {
-    return res.status(400).json({
-      message: "Stripe onboarding not completed"
-    });
-  }
-
-  try {
-    await payoutToUser({
-      coins: withdrawal.amount,
-      stripeAccountId: user.stripeAccountId
+    const income = await Income.findOne({
+      "history._id": withdrawalId
     });
 
-    withdrawal.description = "Paid via Stripe";
+    const withdrawal = income.history.id(withdrawalId);
 
-  } catch (err) {
-    console.error("❌ Stripe payout failed:", err.message);
-
-    return res.status(500).json({
-      message: "Stripe payout failed",
-      error: err.message
-    });
-  }
-}
-
-    // ✋ MANUAL MODE
-    if (process.env.PAYOUT_MODE === "manual") {
-      withdrawal.description = "Manual payout by admin";
-      console.log("⚠️ Manual payout required for user:", userId);
+    if (!withdrawal || withdrawal.status !== "pending") {
+      return res.status(400).json({ message: "No pending request" });
     }
 
-    withdrawal.status = "completed";
-    income.lockedEarnings -= withdrawal.amount;
+    withdrawal.status = "processing";
+    withdrawal.description = "Approved - pending manual payout";
 
     await income.save();
 
-    res.json({
-      success: true,
-      message:
-        process.env.PAYOUT_MODE === "stripe"
-          ? "Paid via Stripe"
-          : "Marked as paid (Manual payout)"
-    });
-
+    res.json({ success: true });
   } catch (err) {
-    console.error("Withdraw Error:", err);
-    res.status(500).json({ message: "Withdrawal failed" });
+    res.status(500).json({ message: "Approval failed" });
   }
 };
-
 /**
- * REJECT withdrawal (refund coins)
+ * STEP 6: MARK AS PAID -> Move to "completed"
  */
-exports.rejectWithdrawal = async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const income = await Income.findOne({ userId });
+// 📁 backend/controllers/withdrawController.js
 
-    if (!income) {
-      return res.status(404).json({ success: false, message: "Income not found" });
+exports.completeWithdrawal = async (req, res) => {
+  try {
+    const { withdrawalId } = req.params;
+
+    const income = await Income.findOne({
+      "history._id": withdrawalId
+    });
+
+    const withdrawal = income.history.id(withdrawalId);
+
+    if (!withdrawal || withdrawal.status !== "processing") {
+      return res.status(400).json({
+        message: "No processing withdrawal found"
+      });
     }
 
-    const withdrawal = income.history.find(
-      h => h.type === "withdrawal" && h.status === "pending"
-    );
+    withdrawal.status = "completed";
+    withdrawal.description = "Paid manually by admin";
+
+    await income.save();
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ message: "Failed" });
+  }
+};
+/**
+ * REJECT withdrawal
+ */
+// 📁 backend/controllers/withdrawController.js
+
+exports.rejectWithdrawal = async (req, res) => {
+  try {
+    const { withdrawalId } = req.params;
+
+    const income = await Income.findOne({
+      "history._id": withdrawalId
+    });
+
+    const withdrawal = income.history.id(withdrawalId);
 
     if (!withdrawal) {
-      return res.status(400).json({
-        success: false,
-        message: "No pending withdrawal"
-      });
+      return res.status(400).json({ message: "No withdrawal found" });
     }
 
     // Refund coins
@@ -136,17 +126,12 @@ exports.rejectWithdrawal = async (req, res) => {
     income.lockedEarnings -= withdrawal.amount;
 
     withdrawal.status = "failed";
-    withdrawal.description += " (Rejected by admin)";
+    withdrawal.description = "Rejected by admin";
 
     await income.save();
 
-    res.json({
-      success: true,
-      message: "Withdrawal rejected and coins refunded"
-    });
-
+    res.json({ success: true });
   } catch (err) {
-    console.error("Reject Withdraw Error:", err);
     res.status(500).json({ success: false });
   }
 };

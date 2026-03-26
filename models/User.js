@@ -124,11 +124,6 @@ deletedAt: {
       default: false,
     },
 
-    stripeAccountId: {
-      type: String,
-      default: null
-    },
-
     // STATUS & SECURITY
     actionstatus: { type: String, enum: ["active", "suspended", "banned"], default: "active" },
 
@@ -154,6 +149,38 @@ callRate: {
   type: Number,
   default: 60
 },
+
+
+// bank details
+
+bankAdded: {
+  type: Boolean,
+  default: false
+},
+// 💰 Payout Details
+country: {
+  type: String,
+  default: "IN",
+  index: true
+},
+
+bankDetails: {
+  accountHolderName: String,
+  accountNumber: String,
+  ifsc: {
+  type: String,
+  match: /^[A-Z]{4}0[A-Z0-9]{6}$/ // basic IFSC validation
+},
+  bankName: String
+},
+upiId: String,
+
+paypalEmail: { 
+  type: String,
+  lowercase: true,
+  trim: true
+},
+
 /* =========================
        FOLLOW & VISIT COUNTS
     ========================= */
@@ -208,6 +235,19 @@ userSchema.pre("save", async function () {
   if (!this.publicId) {
     this.publicId = nanoid();
   }
+});
+
+/* =========================
+   Bank details added
+========================= */
+
+userSchema.pre("save", function (next) {
+  if (this.bankDetails?.accountNumber && this.bankDetails?.ifsc) {
+    this.bankAdded = true;
+  } else {
+    this.bankAdded = false;
+  }
+  next();
 });
 
 module.exports = mongoose.model("User", userSchema);  
