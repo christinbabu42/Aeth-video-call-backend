@@ -13,7 +13,6 @@ const userRoutes = require("./routes/user");
 const adminuserRoutes = require("./routes/adminuser"); 
 const stripeRoutes = require("./routes/stripe.routes.js");
 const walletRoutes = require("./routes/wallet.routes.js");
-const stripeWebhook = require("./webhooks/stripe.webhook.js");
 const adminTransactionRoute = require("./routes/adminTransactionRoute");
 const callRoutes = require("./routes/call.routes.js");
 const incomeRoutes = require("./routes/incomeRoute");
@@ -36,7 +35,6 @@ app.use(cors({
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
-app.use("/webhook", express.raw({ type: "application/json" }), stripeWebhook);
 app.use(express.json());
 
 //multer media
@@ -67,7 +65,6 @@ app.use("/api/admin/coin-packs", require("./routes/adminPurchaseCoinRoute"));
 app.use("/api/admin/calls", require("./routes/adminCallRoute"));
 app.use("/api/withdraw", require("./routes/withdraw.routes.js"));
 app.use("/api/admin/withdraw", require("./routes/admin.withdraw.routes.js"));
-app.use("/api/stripe/connect", require("./routes/stripe.payout.connect.routes.js"));
 app.use("/api/aws", require("./routes/AwsGenderRoute.js"));
 app.use("/api/report-user", require("./routes/ReportUserRoute.js"));
 app.use("/api/admin/reports", require("./routes/AdminReportRoute.js"));

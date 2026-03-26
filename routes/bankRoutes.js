@@ -6,7 +6,7 @@ const {
   getBankDetails
 } = require("../controllers/bankController");
 
-const authMiddleware = require("../middleware/auth"); // adjust if your auth path is different
+const authMiddleware = require("../middlewares/auth"); // adjust if your auth path is different
 
 // ✅ Save bank details
 router.post("/bank-details", authMiddleware, saveBankDetails);
