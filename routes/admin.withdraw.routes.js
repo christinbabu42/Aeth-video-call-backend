@@ -1,6 +1,7 @@
 const express = require("express");
 const auth = require("../middlewares/auth");
 const admin = require("../middlewares/admin");
+const User = require("../models/User");
 
 const {
   getPendingWithdrawals,
@@ -20,7 +21,5 @@ router.get("/pending", auth, admin, getPendingWithdrawals);
 router.post("/approve/:withdrawalId", auth, admin, approveWithdrawal);
 router.post("/complete/:withdrawalId", auth, admin, completeWithdrawal);
 router.post("/reject/:withdrawalId", auth, admin, rejectWithdrawal);
-
-module.exports = router;
 
 module.exports = router;

@@ -8,11 +8,12 @@ const { getRateCoinConfig } = require("../config/RateCoinConfig");
 exports.getPendingWithdrawals = async (req, res) => {
   try {
     const rateConfig = await getRateCoinConfig();
+    
     // ✅ Ensure country and countryName are selected/populated
     const users = await Income.find({
       "history.type": "withdrawal",
       "history.status": { $in: ["pending", "processing"] }
-    }).populate("userId", "name email upiId bankDetails paypalEmail country countryName");
+    }).populate("userId", "name email phone upiId bankDetails paypalEmail country countryName");
 
     const pending = [];
     users.forEach(income => {
@@ -28,7 +29,7 @@ exports.getPendingWithdrawals = async (req, res) => {
           userId: income.userId._id,
           name: income.userId.name,
           email: income.userId.email,
-          phone: income.userId.phone, // ✅ added
+          phone: income.userId.phone, 
           coins: withdrawal.amount,
           status: withdrawal.status,
           rupees: (withdrawal.amount * rateConfig.hostCoinValue).toFixed(2),
@@ -36,7 +37,6 @@ exports.getPendingWithdrawals = async (req, res) => {
           upiId: income.userId.upiId,
           bankDetails: income.userId.bankDetails,
           paypalEmail: income.userId.paypalEmail,
-          // ✅ Pass these to the frontend
           country: income.userId.country,
           countryName: income.userId.countryName 
         });
@@ -46,15 +46,13 @@ exports.getPendingWithdrawals = async (req, res) => {
     res.json({ success: true, pending });
   } catch (err) {
     console.error("Fetch error:", err);
-    res.status(500).json({ success: false });
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 
 /**
- * STEP 5: APPROVE -> Move to "processing"
+ * APPROVE -> Move to "processing"
  */
-// 📁 backend/controllers/withdrawController.js
-
 exports.approveWithdrawal = async (req, res) => {
   try {
     const { withdrawalId } = req.params;
@@ -63,27 +61,38 @@ exports.approveWithdrawal = async (req, res) => {
       "history._id": withdrawalId
     });
 
-    const withdrawal = income.history.id(withdrawalId);
+    if (!income) {
+      return res.status(404).json({ message: "Income not found" });
+    }
 
-    if (!withdrawal || withdrawal.status !== "pending") {
-      return res.status(400).json({ message: "No pending request" });
+    // ✅ FIX: Use .find() and .toString() for string/ID compatibility
+    const withdrawal = income.history.find(
+      h => h._id.toString() === withdrawalId
+    );
+
+    if (!withdrawal) {
+      return res.status(404).json({ message: "Withdrawal not found" });
+    }
+
+    if (withdrawal.status !== "pending") {
+      return res.status(400).json({ message: "Not a pending request" });
     }
 
     withdrawal.status = "processing";
     withdrawal.description = "Approved - pending manual payout";
 
     await income.save();
-
     res.json({ success: true });
+
   } catch (err) {
-    res.status(500).json({ message: "Approval failed" });
+    console.error("Approve error:", err); // 🔥 Detailed log
+    res.status(500).json({ message: "Approval failed", error: err.message });
   }
 };
-/**
- * STEP 6: MARK AS PAID -> Move to "completed"
- */
-// 📁 backend/controllers/withdrawController.js
 
+/**
+ * MARK AS PAID -> Move to "completed"
+ */
 exports.completeWithdrawal = async (req, res) => {
   try {
     const { withdrawalId } = req.params;
@@ -92,7 +101,14 @@ exports.completeWithdrawal = async (req, res) => {
       "history._id": withdrawalId
     });
 
-    const withdrawal = income.history.id(withdrawalId);
+    if (!income) {
+      return res.status(404).json({ message: "Income record not found" });
+    }
+
+    // ✅ FIX: Use .find() and .toString()
+    const withdrawal = income.history.find(
+      h => h._id.toString() === withdrawalId
+    );
 
     if (!withdrawal || withdrawal.status !== "processing") {
       return res.status(400).json({
@@ -104,17 +120,17 @@ exports.completeWithdrawal = async (req, res) => {
     withdrawal.description = "Paid manually by admin";
 
     await income.save();
-
     res.json({ success: true });
+
   } catch (err) {
-    res.status(500).json({ message: "Failed" });
+    console.error("Complete error:", err);
+    res.status(500).json({ message: "Failed to mark as paid", error: err.message });
   }
 };
+
 /**
  * REJECT withdrawal
  */
-// 📁 backend/controllers/withdrawController.js
-
 exports.rejectWithdrawal = async (req, res) => {
   try {
     const { withdrawalId } = req.params;
@@ -123,13 +139,20 @@ exports.rejectWithdrawal = async (req, res) => {
       "history._id": withdrawalId
     });
 
-    const withdrawal = income.history.id(withdrawalId);
+    if (!income) {
+      return res.status(404).json({ message: "Income record not found" });
+    }
+
+    // ✅ FIX: Use .find() and .toString()
+    const withdrawal = income.history.find(
+      h => h._id.toString() === withdrawalId
+    );
 
     if (!withdrawal) {
       return res.status(400).json({ message: "No withdrawal found" });
     }
 
-    // Refund coins
+    // Refund coins to the user's balance
     income.totalEarnings += withdrawal.amount;
     income.lockedEarnings -= withdrawal.amount;
 
@@ -137,9 +160,10 @@ exports.rejectWithdrawal = async (req, res) => {
     withdrawal.description = "Rejected by admin";
 
     await income.save();
-
     res.json({ success: true });
+
   } catch (err) {
-    res.status(500).json({ success: false });
+    console.error("Reject error:", err);
+    res.status(500).json({ success: false, error: err.message });
   }
 };

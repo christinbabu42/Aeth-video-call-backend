@@ -10,7 +10,6 @@ exports.saveBankDetails = async (req, res) => {
       bankName, 
       upiId, 
       paypalEmail, 
-      email,       // ✅ New
       phone,       // ✅ New
       country, 
       countryName 
@@ -39,7 +38,6 @@ exports.saveBankDetails = async (req, res) => {
     user.bankDetails = { accountHolderName, accountNumber, ifsc, bankName };
     user.upiId = upiId;
     user.paypalEmail = paypalEmail;
-    user.email = email;       // ✅ Save email
     user.phone = phone;       // ✅ Save phone
     user.country = country || "IN";
     user.countryName = countryName || "India";

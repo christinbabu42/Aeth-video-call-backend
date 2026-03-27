@@ -161,7 +161,6 @@ callRate: {
       accountNumber: String,
       ifsc: { type: String }, // ✅ Removed strict regex here to allow empty for non-IN
       bankName: String,
-      email: { type: String, lowercase: true, trim: true }, // ✅ New
       phone: { type: String, trim: true },                  // ✅ New
     },
     upiId: String,
