@@ -28,6 +28,7 @@ exports.getPendingWithdrawals = async (req, res) => {
           userId: income.userId._id,
           name: income.userId.name,
           email: income.userId.email,
+          phone: income.userId.phone, // ✅ added
           coins: withdrawal.amount,
           status: withdrawal.status,
           rupees: (withdrawal.amount * rateConfig.hostCoinValue).toFixed(2),
