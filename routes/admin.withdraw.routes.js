@@ -14,13 +14,13 @@ const router = express.Router();
 // ✅ Get all withdrawals (pending + processing)
 router.get("/pending", auth, admin, getPendingWithdrawals);
 
-// ✅ STEP 1: Approve → pending → processing
-router.post("/approve/:userId", auth, admin, approveWithdrawal);
+// ... existing imports
 
-// ✅ STEP 2: Complete → processing → completed
-router.post("/complete/:userId", auth, admin, completeWithdrawal);
+// ✅ Change :userId to :withdrawalId in all payout routes
+router.post("/approve/:withdrawalId", auth, admin, approveWithdrawal);
+router.post("/complete/:withdrawalId", auth, admin, completeWithdrawal);
+router.post("/reject/:withdrawalId", auth, admin, rejectWithdrawal);
 
-// ❌ STEP 3: Reject → refund coins
-router.post("/reject/:userId", auth, admin, rejectWithdrawal);
+module.exports = router;
 
 module.exports = router;

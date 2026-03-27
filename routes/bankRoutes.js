@@ -1,17 +1,12 @@
 const express = require("express");
 const router = express.Router();
+const { saveBankDetails, getBankDetails } = require("../controllers/bankController");
+const authMiddleware = require("../middlewares/auth");
 
-const {
-  saveBankDetails,
-  getBankDetails
-} = require("../controllers/bankController");
+// Save or update bank details
+router.post("/", authMiddleware, saveBankDetails);
 
-const authMiddleware = require("../middlewares/auth"); // adjust if your auth path is different
+// Get bank details
+router.get("/", authMiddleware, getBankDetails);
 
-// ✅ Save bank details
-router.post("/bank-details", authMiddleware, saveBankDetails);
-
-// ✅ Get bank details (optional - useful for edit screen)
-router.get("/bank-details", authMiddleware, getBankDetails);
-
-module.exports = router;
+module.exports = router; 

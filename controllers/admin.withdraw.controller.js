@@ -8,13 +8,16 @@ const { getRateCoinConfig } = require("../config/RateCoinConfig");
 exports.getPendingWithdrawals = async (req, res) => {
   try {
     const rateConfig = await getRateCoinConfig();
+    // ✅ Ensure country and countryName are selected/populated
     const users = await Income.find({
       "history.type": "withdrawal",
-      "history.status": { $in: ["pending", "processing"] } // Fetch both
-    }).populate("userId", "name email upiId bankDetails paypalEmail country");
+      "history.status": { $in: ["pending", "processing"] }
+    }).populate("userId", "name email upiId bankDetails paypalEmail country countryName");
 
     const pending = [];
     users.forEach(income => {
+      if (!income.userId) return; // Safety check
+
       const activeWithdrawals = income.history.filter(
         h => h.type === "withdrawal" && (h.status === "pending" || h.status === "processing")
       );
@@ -26,18 +29,22 @@ exports.getPendingWithdrawals = async (req, res) => {
           name: income.userId.name,
           email: income.userId.email,
           coins: withdrawal.amount,
-          status: withdrawal.status, // ✅ Added status
+          status: withdrawal.status,
           rupees: (withdrawal.amount * rateConfig.hostCoinValue).toFixed(2),
           createdAt: withdrawal.createdAt,
           upiId: income.userId.upiId,
           bankDetails: income.userId.bankDetails,
-          paypalEmail: income.userId.paypalEmail
+          paypalEmail: income.userId.paypalEmail,
+          // ✅ Pass these to the frontend
+          country: income.userId.country,
+          countryName: income.userId.countryName 
         });
       });
     });
 
     res.json({ success: true, pending });
   } catch (err) {
+    console.error("Fetch error:", err);
     res.status(500).json({ success: false });
   }
 };

@@ -152,34 +152,18 @@ callRate: {
 
 
 // bank details
-
-bankAdded: {
-  type: Boolean,
-  default: false
-},
 // 💰 Payout Details
-country: {
-  type: String,
-  default: "IN",
-  index: true
-},
-
-bankDetails: {
-  accountHolderName: String,
-  accountNumber: String,
-  ifsc: {
-  type: String,
-  match: /^[A-Z]{4}0[A-Z0-9]{6}$/ // basic IFSC validation
-},
-  bankName: String
-},
-upiId: String,
-
-paypalEmail: { 
-  type: String,
-  lowercase: true,
-  trim: true
-},
+    bankAdded: { type: Boolean, default: false },
+    country: { type: String, default: "IN", index: true },
+    countryName: { type: String, default: "India" }, // ✅ Added for display
+    bankDetails: {
+      accountHolderName: String,
+      accountNumber: String,
+      ifsc: { type: String }, // ✅ Removed strict regex here to allow empty for non-IN
+      bankName: String
+    },
+    upiId: String,
+    paypalEmail: { type: String, lowercase: true, trim: true },
 
 /* =========================
        FOLLOW & VISIT COUNTS
@@ -241,13 +225,12 @@ userSchema.pre("save", async function () {
    Bank details added
 ========================= */
 
-userSchema.pre("save", function (next) {
+userSchema.pre("save", async function () {
   if (this.bankDetails?.accountNumber && this.bankDetails?.ifsc) {
     this.bankAdded = true;
   } else {
     this.bankAdded = false;
   }
-  next();
 });
 
 module.exports = mongoose.model("User", userSchema);  
