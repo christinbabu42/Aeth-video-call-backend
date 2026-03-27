@@ -31,7 +31,7 @@
       // Optional: useful for tracking if a withdrawal is pending or completed
       status: {
         type: String,
-        enum: ['completed', 'pending', 'failed'],
+        enum: ['completed', "processing", 'pending', 'failed'],
         default: 'completed'
       },
       createdAt: { type: Date, default: Date.now }

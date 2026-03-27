@@ -161,7 +161,7 @@ callRate: {
       accountNumber: String,
       ifsc: { type: String }, // ✅ Removed strict regex here to allow empty for non-IN
       bankName: String,
-      phone: { type: String, trim: true },                  // ✅ New
+      phone: { type: String, trim: true },  // ✅ New
     },
     upiId: String,
     paypalEmail: { type: String, lowercase: true, trim: true },
@@ -227,7 +227,12 @@ userSchema.pre("save", async function () {
 ========================= */
 
 userSchema.pre("save", async function () {
-  if (this.bankDetails?.accountNumber && this.bankDetails?.ifsc) {
+  const isIndia = this.country === "IN" || this.countryName === "India";
+
+  if (
+    this.bankDetails?.accountNumber &&
+    (!isIndia || this.bankDetails?.ifsc) // IFSC only required for India
+  ) {
     this.bankAdded = true;
   } else {
     this.bankAdded = false;

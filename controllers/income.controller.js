@@ -1,6 +1,6 @@
 const Income = require("../models/Income");
-// Ensure you import your config to access hostCoinValue
-const config = require("../config/RateCoinConfig"); 
+const User = require("../models/User"); // ✅ ADD THIS
+const config = require("../config/RateCoinConfig");
 
 exports.getIncome = async (req, res) => {
   try {
@@ -17,7 +17,10 @@ exports.getIncome = async (req, res) => {
       });
     }
 
-    // 🔥 calculate breakdown from history
+    // ✅ GET USER DATA (VERY IMPORTANT)
+    const user = await User.findById(userId).select("bankAdded");
+
+    // 🔥 calculate breakdown
     const breakdown = {
       call: 0,
       gift: 0,
@@ -30,17 +33,19 @@ exports.getIncome = async (req, res) => {
       if (item.type === "live") breakdown.live += item.amount;
     });
 
-    // Sort history by date descending
     const sortedHistory = income.history.sort((a, b) => b.createdAt - a.createdAt);
 
     res.status(200).json({
       success: true,
       totalEarnings: income.totalEarnings,
       breakdown,
+
+      // ✅ ADD THIS LINE
+      bankAdded: user?.bankAdded || false,
+
       history: sortedHistory.map(item => ({
         ...item._doc,
-        // 🔥 Dynamically calculate rupees based on current backend rate
-        rupees: item.amount * (config.hostCoinValue || 0.45) 
+        rupees: item.amount * (config.hostCoinValue || 0.45)
       }))
     });
 

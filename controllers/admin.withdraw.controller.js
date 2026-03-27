@@ -1,6 +1,8 @@
 const Income = require("../models/Income");
 const User = require("../models/User");
+const mongoose = require("mongoose");
 const { getRateCoinConfig } = require("../config/RateCoinConfig");
+
 
 /**
  * GET all withdrawals (Pending & Processing)
@@ -29,7 +31,7 @@ exports.getPendingWithdrawals = async (req, res) => {
           userId: income.userId._id,
           name: income.userId.name,
           email: income.userId.email,
-          phone: income.userId.phone, 
+          phone: income.userId.bankDetails?.phone,
           coins: withdrawal.amount,
           status: withdrawal.status,
           rupees: (withdrawal.amount * rateConfig.hostCoinValue).toFixed(2),
@@ -57,10 +59,11 @@ exports.approveWithdrawal = async (req, res) => {
   try {
     const { withdrawalId } = req.params;
 
-    const income = await Income.findOne({
-      "history._id": withdrawalId
-    });
 
+
+const income = await Income.findOne({
+  "history._id": new mongoose.Types.ObjectId(withdrawalId)
+});
     if (!income) {
       return res.status(404).json({ message: "Income not found" });
     }
@@ -98,7 +101,7 @@ exports.completeWithdrawal = async (req, res) => {
     const { withdrawalId } = req.params;
 
     const income = await Income.findOne({
-      "history._id": withdrawalId
+      "history._id": new mongoose.Types.ObjectId(withdrawalId)
     });
 
     if (!income) {

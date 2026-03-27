@@ -35,10 +35,9 @@ exports.saveBankDetails = async (req, res) => {
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    user.bankDetails = { accountHolderName, accountNumber, ifsc, bankName };
+    user.bankDetails = { accountHolderName, accountNumber, ifsc, bankName, phone  };
     user.upiId = upiId;
     user.paypalEmail = paypalEmail;
-    user.phone = phone;       // ✅ Save phone
     user.country = country || "IN";
     user.countryName = countryName || "India";
 
