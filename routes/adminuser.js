@@ -2,51 +2,135 @@ const express = require("express");
 const router = express.Router();
 const User = require("../models/User");
 const Wallet = require("../models/Wallet");
+const Income = require("../models/Income");
+const RateCoinConfig = require("../models/RateCoinConfig");
 const auth = require("../middlewares/auth");
 const admin = require("../middlewares/admin");
+const Call = require("../models/Call");
 
 
 /**
  * @route   GET /api/admin/stats
- * @desc    Get dashboard summary for Overview.jsx
+ * @desc    Get dashboard summary for Overview.jsx with precise Revenue Logic
  */
 router.get("/stats", auth, admin, async (req, res) => {
-    console.log("✅ ADMIN ROUTE HIT");
+  console.log("✅ ADMIN STATS ROUTE HIT with Range:", req.query.range);
   try {
+    const { range, startDate, endDate } = req.query;
+
     const totalUsers = await User.countDocuments({ role: "user" });
     const totalHosts = await User.countDocuments({ gender: "female" });
-    const onlineHosts = await User.countDocuments({ gender: "female", status: "online", });
+    const onlineHosts = await User.countDocuments({ gender: "female", status: "online" });
     
-    // Aggregating wallet data for revenue cards
-    const walletStats = await Wallet.aggregate([
+    const config = await RateCoinConfig.findOne();
+    const userCoinValue = config?.userCoinValue || 1;
+    const hostCoinValue = config?.hostCoinValue || 0.45;
+
+    // --- 🕒 1. DYNAMIC DATE FILTER LOGIC ---
+    let matchQuery = {
+      status: "completed"
+    };
+
+    const now = new Date();
+    const startOfToday = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    startOfToday.setHours(0, 0, 0, 0);
+
+    // Apply filters based on range (using createdAt directly for Call schema)
+    if (range === '5min') {
+      matchQuery["createdAt"] = { $gte: new Date(now.getTime() - 5 * 60000) };
+    } else if (range === 'today') {
+      matchQuery["createdAt"] = { $gte: startOfToday };
+    } else if (range === '2days') {
+      const twoDaysAgo = new Date(startOfToday);
+      twoDaysAgo.setDate(twoDaysAgo.getDate() - 1);
+      matchQuery["createdAt"] = { $gte: twoDaysAgo };
+    } else if (range === '1week') {
+      const oneWeekAgo = new Date(startOfToday);
+      oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+      matchQuery["createdAt"] = { $gte: oneWeekAgo };
+    } else if (range === '1month') {
+      const oneMonthAgo = new Date(startOfToday);
+      oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+      matchQuery["createdAt"] = { $gte: oneMonthAgo };
+    } else if (range === '6months') {
+      const sixMonthsAgo = new Date(startOfToday);
+      sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+      matchQuery["createdAt"] = { $gte: sixMonthsAgo };
+    } else if (range === '1year') {
+      const oneYearAgo = new Date(startOfToday);
+      oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+      matchQuery["createdAt"] = { $gte: oneYearAgo };
+    } else if (range === 'custom' && startDate && endDate) {
+      matchQuery["createdAt"] = { 
+        $gte: new Date(startDate), 
+        $lte: new Date(new Date(endDate).setHours(23, 59, 59, 999)) 
+      };
+    }
+
+    // --- 📊 2. AGGREGATE FILTERED STATS (From Call Schema) ---
+    const periodStats = await Call.aggregate([
+      { $match: matchQuery }, 
       {
         $group: {
           _id: null,
-          totalCoins: { $sum: "$coins" }
+          periodRevenue: { $sum: { $multiply: ["$totalCoinsSpent", userCoinValue] } },
+          periodCommission: { $sum: "$platformFeeInRupees" }
         }
       }
     ]);
 
-    const revenue = walletStats[0]?.totalCoins || 0;
+    // --- 📊 3. AGGREGATE ALL-TIME STATS (For the Total Card) ---
+    const totalStats = await Call.aggregate([
+      { $match: { status: "completed" } },
+      {
+        $group: {
+          _id: null,
+          totalRevenue: { $sum: { $multiply: ["$totalCoinsSpent", userCoinValue] } }
+        }
+      }
+    ]);
+
+    const stats = periodStats[0] || { periodRevenue: 0, periodCommission: 0 };
+    const allTime = totalStats[0] || { totalRevenue: 0 };
+
+    // --- 💰 4. CORRECTED PENDING PAYOUTS (Matches Withdrawal Logic) ---
+    const pendingWithdrawals = await Income.aggregate([
+      { $unwind: "$history" },
+      { 
+        $match: { 
+          "history.type": "withdrawal", 
+          "history.status": { $in: ["pending", "processing"] } 
+        } 
+      },
+      {
+        $group: {
+          _id: null,
+          totalPendingCoins: { $sum: "$history.amount" }
+        }
+      }
+    ]);
+
+    const pendingPayouts = (pendingWithdrawals[0]?.totalPendingCoins || 0) * hostCoinValue;
 
     res.json({
       totalUsers,
       totalHosts,
       onlineHosts,
-      activeCalls: 0, // Placeholder
-      todayRevenue: revenue * 0.02, // Example logic
-      totalRevenue: revenue,
-      commission: revenue * 0.1,
-      pendingPayouts: 0
+      activeCalls: 0,
+      todayRevenue: Number(stats.periodRevenue.toFixed(2)), // maps to Period Revenue
+      totalRevenue: Number(allTime.totalRevenue.toFixed(2)),
+      commission: Number(stats.periodCommission.toFixed(2)), // maps to Net Commission
+      pendingPayouts: Number(pendingPayouts.toFixed(2))
     });
+
   } catch (err) {
+    console.error("Stats error:", err);
     res.status(500).json({ success: false, message: "Server Error" });
   }
 });
-
 /**
  * @route   GET /api/admin/users
- * @desc    Existing users fetch logic
+ * @desc    Fetch all users with their current wallet balances
  */
 router.get("/users", auth, admin, async (req, res) => {
   try {
@@ -70,7 +154,7 @@ router.get("/users", auth, admin, async (req, res) => {
           profilePic: 1,
           actionstatus: 1,
           createdAt: 1,
-          publicId: 1, // ✅ ADD THIS LINE
+          publicId: 1,
           coins: { $ifNull: [{ $arrayElemAt: ["$walletData.coins", 0] }, 0] }
         }
       },
@@ -84,17 +168,17 @@ router.get("/users", auth, admin, async (req, res) => {
 
 /**
  * @route   PUT /api/admin/users/:id/action
+ * @desc    Update user details (Suspend, Verify, Change Role)
  */
 router.put("/users/:id/action", auth, admin, async (req, res) => {
   try {
-    const actor = req.user; // admin or superadmin
+    const actor = req.user; 
     const targetUser = await User.findById(req.params.id);
 
     if (!targetUser) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    // 🚫 Nobody can modify a superadmin
     if (targetUser.role === "superadmin") {
       return res.status(403).json({
         success: false,
@@ -102,9 +186,7 @@ router.put("/users/:id/action", auth, admin, async (req, res) => {
       });
     }
 
-    // 🚫 Role change protection
     if (req.body.role) {
-      // Only superadmin can assign admin or superadmin
       if (
         actor.role !== "superadmin" &&
         ["admin", "superadmin"].includes(req.body.role)
@@ -126,16 +208,19 @@ router.put("/users/:id/action", auth, admin, async (req, res) => {
   }
 });
 
+/**
+ * @route   DELETE /api/admin/user/:id
+ * @desc    Delete user and their associated wallet
+ */
 router.delete("/user/:id", auth, admin, async (req, res) => {
   try {
-    const actor = req.user; // logged-in admin
+    const actor = req.user; 
     const targetUser = await User.findById(req.params.id);
 
     if (!targetUser) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    // 🚫 NEVER allow deleting superadmin
     if (targetUser.role === "superadmin") {
       return res.status(403).json({
         success: false,
@@ -143,7 +228,6 @@ router.delete("/user/:id", auth, admin, async (req, res) => {
       });
     }
 
-    // 🚫 Admin cannot delete another admin
     if (actor.role === "admin" && targetUser.role === "admin") {
       return res.status(403).json({
         success: false,
@@ -151,7 +235,6 @@ router.delete("/user/:id", auth, admin, async (req, res) => {
       });
     }
 
-    // ✅ Delete wallet + user
     await Wallet.deleteOne({ userId: targetUser._id });
     await User.deleteOne({ _id: targetUser._id });
 
