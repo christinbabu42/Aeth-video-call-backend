@@ -25,9 +25,6 @@ router.get("/stats", auth, admin, async (req, res) => {
     const config = await RateCoinConfig.findOne();
     const userCoinValue = config?.userCoinValue || 1;
     const hostCoinValue = config?.hostCoinValue || 0.45;
-    
-    // 🔥 STEP 1: Fallback for Commission Rate (Default to 20% if not in DB)
-    const giftCommissionRate = config?.giftCommissionRate ?? 0.2;
 
     // --- 🕒 1. DYNAMIC DATE FILTER LOGIC ---
     let matchQuery = { status: "completed" };
@@ -82,10 +79,11 @@ router.get("/stats", auth, admin, async (req, res) => {
       }
     ]);
 
-    // --- 🎁 2.5 GIFT COMMISSION (From WalletTransaction Schema) ---
+    // --- 🎁 2.5 GIFT COMMISSION (DIRECT FROM CREDIT TRANSACTIONS) ---
+    // ✅ Logic: Sum 'amount' from CREDIT entries where category is GIFT_PURCHASE
     const giftMatch = {
       category: "GIFT_PURCHASE",
-      type: "DEBIT",
+      type: "CREDIT",
       status: "SUCCESS"
     };
 
@@ -98,20 +96,17 @@ router.get("/stats", auth, admin, async (req, res) => {
       {
         $group: {
           _id: null,
-          totalAmount: { $sum: "$amount" },
-          totalGiftCoins: { $sum: "$coins" }
+          totalCommission: { $sum: "$amount" } 
         }
       }
     ]);
 
-    const totalAmount = giftAgg[0]?.totalAmount || 0;
-    const giftCommission = totalAmount * giftCommissionRate;
+    const giftCommission = giftAgg[0]?.totalCommission || 0;
 
-    // ✅ STEP 2: Debug Logs
-    console.log("--- 🎁 Gift Analytics ---");
-    console.log("Total Gift Amount ₹:", totalAmount);
-    console.log("Gift Commission Rate:", giftCommissionRate);
-    console.log("Final Gift Commission ₹:", giftCommission);
+    // ✅ Debug Logs for Verification
+    console.log("--- 🎁 Gift Revenue Debug ---");
+    console.log("Range Query:", matchQuery.createdAt);
+    console.log("Direct Gift Commission ₹:", giftCommission);
 
     // --- 📊 3. AGGREGATE ALL-TIME STATS ---
     const totalStats = await Call.aggregate([
@@ -127,7 +122,7 @@ router.get("/stats", auth, admin, async (req, res) => {
     const stats = periodStats[0] || { periodRevenue: 0, periodCommission: 0 };
     const allTime = totalStats[0] || { totalRevenue: 0 };
 
-    // 🔥 Total Commission Merge
+    // 🔥 Final Commission Merge (Call Commission + Direct Gift Commission)
     const totalCommission = (stats.periodCommission || 0) + giftCommission;
 
     // --- 💰 4. PENDING PAYOUTS ---
@@ -167,8 +162,10 @@ router.get("/stats", auth, admin, async (req, res) => {
   }
 });
 
-// ... [Remainder of the routes: /users, /users/:id/action, /user/:id remain unchanged]
-
+/**
+ * @route   GET /api/admin/users
+ * @desc    Fetch all users with their current wallet balances
+ */
 router.get("/users", auth, admin, async (req, res) => {
   try {
     const usersWithWallet = await User.aggregate([
@@ -203,6 +200,10 @@ router.get("/users", auth, admin, async (req, res) => {
   }
 });
 
+/**
+ * @route   PUT /api/admin/users/:id/action
+ * @desc    Update user details
+ */
 router.put("/users/:id/action", auth, admin, async (req, res) => {
   try {
     const actor = req.user; 
@@ -213,21 +214,12 @@ router.put("/users/:id/action", auth, admin, async (req, res) => {
     }
 
     if (targetUser.role === "superadmin") {
-      return res.status(403).json({
-        success: false,
-        message: "Superadmin role cannot be modified",
-      });
+      return res.status(403).json({ success: false, message: "Superadmin role cannot be modified" });
     }
 
     if (req.body.role) {
-      if (
-        actor.role !== "superadmin" &&
-        ["admin", "superadmin"].includes(req.body.role)
-      ) {
-        return res.status(403).json({
-          success: false,
-          message: "Only superadmin can assign admin roles",
-        });
+      if (actor.role !== "superadmin" && ["admin", "superadmin"].includes(req.body.role)) {
+        return res.status(403).json({ success: false, message: "Only superadmin can assign admin roles" });
       }
     }
 
@@ -241,6 +233,10 @@ router.put("/users/:id/action", auth, admin, async (req, res) => {
   }
 });
 
+/**
+ * @route   DELETE /api/admin/user/:id
+ * @desc    Delete user and their associated wallet
+ */
 router.delete("/user/:id", auth, admin, async (req, res) => {
   try {
     const actor = req.user; 
@@ -251,17 +247,11 @@ router.delete("/user/:id", auth, admin, async (req, res) => {
     }
 
     if (targetUser.role === "superadmin") {
-      return res.status(403).json({
-        success: false,
-        message: "Superadmin cannot be deleted",
-      });
+      return res.status(403).json({ success: false, message: "Superadmin cannot be deleted" });
     }
 
     if (actor.role === "admin" && targetUser.role === "admin") {
-      return res.status(403).json({
-        success: false,
-        message: "Only superadmin can delete admins",
-      });
+      return res.status(403).json({ success: false, message: "Only superadmin can delete admins" });
     }
 
     await Wallet.deleteOne({ userId: targetUser._id });
