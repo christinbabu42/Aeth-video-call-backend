@@ -24,7 +24,7 @@ exports.getIncome = async (req, res) => {
     // ✅ GET USER DATA
     const user = await User.findById(userId).select("bankAdded");
 
-    // ✅ GET CONFIG FROM DB (Replaces hardcoded MIN_WITHDRAW_COINS)
+    // ✅ GET CONFIG FROM DB
     const rateConfig = await RateCoinConfig.findOne();
     const minWithdrawal = rateConfig?.minimumWithdrawalAmount || 500;
     const hostRate = rateConfig?.hostCoinValue || 0.45;
@@ -52,7 +52,10 @@ exports.getIncome = async (req, res) => {
       minWithdrawal, // ✅ dynamic limit sent to frontend
       history: sortedHistory.map(item => ({
         ...item._doc,
-        rupees: item.amount * hostRate // ✅ uses dynamic hostRate
+        // ✅ PRODUCTION FALLBACK SYSTEM
+        // 1. Use stored rupees if available (stored at time of transaction)
+        // 2. Otherwise calculate dynamically: amount (hostCoins) * hostRate
+        rupees: item.rupees || (item.amount * hostRate)
       }))
     });
 
@@ -102,9 +105,13 @@ exports.withdraw = async (req, res) => {
       income.lockedEarnings += amount;
     }
 
+    // ✅ Calculation for record (Total ₹ to be paid to host)
+    const withdrawalRupees = amount * hostRate;
+
     income.history.push({
       type: "withdrawal",
       amount: amount,
+      rupees: withdrawalRupees, // ✅ Store rupees for withdrawal auditing
       status: "pending",
       description: "Withdrawal request submitted",
       createdAt: new Date()
