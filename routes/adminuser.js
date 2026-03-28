@@ -25,26 +25,19 @@ router.get("/stats", auth, admin, async (req, res) => {
     const config = await RateCoinConfig.findOne();
     const userCoinValue = config?.userCoinValue || 1;
     const hostCoinValue = config?.hostCoinValue || 0.45;
+    
+    // 🔥 STEP 1: Fallback for Commission Rate (Default to 20% if not in DB)
+    const giftCommissionRate = config?.giftCommissionRate ?? 0.2;
 
     // --- 🕒 1. DYNAMIC DATE FILTER LOGIC ---
     let matchQuery = { status: "completed" };
 
-    
-const now = new Date();
-
-// IST offset = +5:30
-const IST_OFFSET = 5.5 * 60 * 60 * 1000;
-
-// Convert now → IST
-const nowIST = new Date(now.getTime() + IST_OFFSET);
-
-// Start of today in IST
-const startOfTodayIST = new Date(nowIST);
-startOfTodayIST.setHours(0, 0, 0, 0);
-
-// Convert back to UTC for MongoDB
-const startOfToday = new Date(startOfTodayIST.getTime() - IST_OFFSET);
-
+    const now = new Date();
+    const IST_OFFSET = 5.5 * 60 * 60 * 1000;
+    const nowIST = new Date(now.getTime() + IST_OFFSET);
+    const startOfTodayIST = new Date(nowIST);
+    startOfTodayIST.setHours(0, 0, 0, 0);
+    const startOfToday = new Date(startOfTodayIST.getTime() - IST_OFFSET);
 
     if (range === '5min') {
       matchQuery["createdAt"] = { $gte: new Date(now.getTime() - 5 * 60000) };
@@ -105,15 +98,20 @@ const startOfToday = new Date(startOfTodayIST.getTime() - IST_OFFSET);
       {
         $group: {
           _id: null,
+          totalAmount: { $sum: "$amount" },
           totalGiftCoins: { $sum: "$coins" }
         }
       }
     ]);
 
-    const totalGiftCoins = giftAgg[0]?.totalGiftCoins || 0;
-    
-    // Calculate ₹ earnings from gifts (Coins * hostValue * platformCommissionRate)
-    const giftCommission = totalGiftCoins * hostCoinValue * (config?.giftCommissionRate || 0);
+    const totalAmount = giftAgg[0]?.totalAmount || 0;
+    const giftCommission = totalAmount * giftCommissionRate;
+
+    // ✅ STEP 2: Debug Logs
+    console.log("--- 🎁 Gift Analytics ---");
+    console.log("Total Gift Amount ₹:", totalAmount);
+    console.log("Gift Commission Rate:", giftCommissionRate);
+    console.log("Final Gift Commission ₹:", giftCommission);
 
     // --- 📊 3. AGGREGATE ALL-TIME STATS ---
     const totalStats = await Call.aggregate([
@@ -129,7 +127,7 @@ const startOfToday = new Date(startOfTodayIST.getTime() - IST_OFFSET);
     const stats = periodStats[0] || { periodRevenue: 0, periodCommission: 0 };
     const allTime = totalStats[0] || { totalRevenue: 0 };
 
-    // 🔥 Final Commission Merge (Call Commission + Gift Commission)
+    // 🔥 Total Commission Merge
     const totalCommission = (stats.periodCommission || 0) + giftCommission;
 
     // --- 💰 4. PENDING PAYOUTS ---
@@ -158,8 +156,8 @@ const startOfToday = new Date(startOfTodayIST.getTime() - IST_OFFSET);
       activeCalls: 0,
       todayRevenue: Number(stats.periodRevenue.toFixed(2)),
       totalRevenue: Number(allTime.totalRevenue.toFixed(2)),
-      commission: Number(totalCommission.toFixed(2)), // Calls + Gifts
-      giftCommission: Number(giftCommission.toFixed(2)), // Gift Only Breakdown
+      commission: Number(totalCommission.toFixed(2)), 
+      giftCommission: Number(giftCommission.toFixed(2)), 
       pendingPayouts: Number(pendingPayouts.toFixed(2))
     });
 
@@ -169,10 +167,8 @@ const startOfToday = new Date(startOfTodayIST.getTime() - IST_OFFSET);
   }
 });
 
-/**
- * @route   GET /api/admin/users
- * @desc    Fetch all users with their current wallet balances
- */
+// ... [Remainder of the routes: /users, /users/:id/action, /user/:id remain unchanged]
+
 router.get("/users", auth, admin, async (req, res) => {
   try {
     const usersWithWallet = await User.aggregate([
@@ -207,10 +203,6 @@ router.get("/users", auth, admin, async (req, res) => {
   }
 });
 
-/**
- * @route   PUT /api/admin/users/:id/action
- * @desc    Update user details (Suspend, Verify, Change Role)
- */
 router.put("/users/:id/action", auth, admin, async (req, res) => {
   try {
     const actor = req.user; 
@@ -249,10 +241,6 @@ router.put("/users/:id/action", auth, admin, async (req, res) => {
   }
 });
 
-/**
- * @route   DELETE /api/admin/user/:id
- * @desc    Delete user and their associated wallet
- */
 router.delete("/user/:id", auth, admin, async (req, res) => {
   try {
     const actor = req.user; 
