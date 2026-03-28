@@ -4,6 +4,7 @@ const User = require("../models/User");
 const Transaction = require("../models/Transaction");
 const Wallet = require("../models/Wallet");
 const authMiddleware = require("../middlewares/auth");
+const { calculateLevel } = require("../utils/levelCalculator");
 
 const COIN_PACKS = {
   "coins_60": { coins: 60, price: 40 },
@@ -57,6 +58,14 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
         { new: true, upsert: true }
       );
 
+            // ✅ 2. Update XP + Level
+      const xpEarned = pack.coins;
+
+      const user = await User.findById(userId);
+      user.xp = (user.xp || 0) + xpEarned;
+      user.level = calculateLevel(user.xp);
+      await user.save();
+
       // Record the transaction for history
       await Transaction.create({
         user: userId,
@@ -71,10 +80,12 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
         note: "AWS Mock Purchase"
       });
       
-      return res.json({ 
-        success: true, 
-        newBalance: updatedWallet.coins 
-      });
+return res.json({ 
+  success: true, 
+  newBalance: updatedWallet.coins,
+  xp: user.xp,
+  level: user.level
+});
     }
   } catch (error) {
     console.error("IAP Error:", error);
