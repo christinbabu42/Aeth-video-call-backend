@@ -17,6 +17,10 @@ const RateCoinConfigSchema = new mongoose.Schema({
     type: Number,
     default: 0.2 // Gift commission (20%)
   },
+  minimumWithdrawalAmount: {
+  type: Number,
+  default: 500 // ₹500 minimum withdrawal (you can change)
+},
   updatedAt: {
     type: Date,
     default: Date.now

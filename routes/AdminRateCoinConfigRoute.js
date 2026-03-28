@@ -19,9 +19,11 @@ router.put("/", auth, admin, async (req, res) => {
     hostCoinValue,
     platformCommissionRate,
     userCoinValue,
-    giftCommissionRate
+    giftCommissionRate,
+    minimumWithdrawalAmount // ✅ ADDED
   } = req.body;
 
+  // Existing Commission Validations
   if (
     platformCommissionRate < 0 || platformCommissionRate > 1 ||
     giftCommissionRate < 0 || giftCommissionRate > 1
@@ -29,6 +31,14 @@ router.put("/", auth, admin, async (req, res) => {
     return res.status(400).json({
       success: false,
       message: "Commission rates must be between 0 and 1"
+    });
+  }
+
+  // ✅ New Minimum Withdrawal Validation
+  if (minimumWithdrawalAmount < 0) {
+    return res.status(400).json({
+      success: false,
+      message: "Minimum withdrawal must be >= 0"
     });
   }
 
@@ -40,6 +50,7 @@ router.put("/", auth, admin, async (req, res) => {
         platformCommissionRate,
         giftCommissionRate,
         userCoinValue,
+        minimumWithdrawalAmount, // ✅ ADDED TO DB UPDATE
         updatedAt: new Date()
       },
       { upsert: true, new: true }
@@ -48,6 +59,7 @@ router.put("/", auth, admin, async (req, res) => {
     clearConfigCache();
     res.json({ success: true, message: "Updated", config });
   } catch (err) {
+    console.error("RateConfig Update Error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });

@@ -1,9 +1,7 @@
 const Income = require("../models/Income");
 const User = require("../models/User"); 
 const config = require("../config/RateCoinConfig");
-
-// ✅ Define constant at the top
-const MIN_WITHDRAW_COINS = 2000;
+const RateCoinConfig = require("../models/RateCoinConfig");
 
 /**
  * GET Income details and breakdown
@@ -26,6 +24,11 @@ exports.getIncome = async (req, res) => {
     // ✅ GET USER DATA
     const user = await User.findById(userId).select("bankAdded");
 
+    // ✅ GET CONFIG FROM DB (Replaces hardcoded MIN_WITHDRAW_COINS)
+    const rateConfig = await RateCoinConfig.findOne();
+    const minWithdrawal = rateConfig?.minimumWithdrawalAmount || 500;
+    const hostRate = rateConfig?.hostCoinValue || 0.45;
+
     // 🔥 calculate breakdown
     const breakdown = {
       call: 0,
@@ -46,10 +49,10 @@ exports.getIncome = async (req, res) => {
       totalEarnings: income.totalEarnings,
       breakdown,
       bankAdded: user?.bankAdded || false,
-      minWithdrawal: MIN_WITHDRAW_COINS, // ✅ Inform frontend of the limit
+      minWithdrawal, // ✅ dynamic limit sent to frontend
       history: sortedHistory.map(item => ({
         ...item._doc,
-        rupees: item.amount * (config.hostCoinValue || 0.45)
+        rupees: item.amount * hostRate // ✅ uses dynamic hostRate
       }))
     });
 
@@ -68,16 +71,21 @@ exports.withdraw = async (req, res) => {
     const { amount } = req.body;
 
     const income = await Income.findOne({ userId });
+    
+    // ✅ GET LATEST CONFIG FOR VALIDATION
+    const rateConfig = await RateCoinConfig.findOne();
+    const minWithdrawal = rateConfig?.minimumWithdrawalAmount || 500;
+    const hostRate = rateConfig?.hostCoinValue || 0.45;
 
     if (!income) {
       return res.status(404).json({ message: "Income record not found" });
     }
 
-    // ✅ STEP 1: Check Minimum Threshold (2000 coins)
-    if (amount < MIN_WITHDRAW_COINS) {
+    // ✅ STEP 1: Check Dynamic Minimum Threshold
+    if (amount < minWithdrawal) {
       return res.status(400).json({
         code: "MIN_WITHDRAW",
-        message: `Minimum withdrawal is ${MIN_WITHDRAW_COINS} coins (₹${(MIN_WITHDRAW_COINS * config.hostCoinValue).toFixed(0)})`
+        message: `Minimum withdrawal is ${minWithdrawal} coins (₹${(minWithdrawal * hostRate).toFixed(0)})`
       });
     }
 
