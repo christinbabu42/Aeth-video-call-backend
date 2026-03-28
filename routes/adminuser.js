@@ -29,9 +29,22 @@ router.get("/stats", auth, admin, async (req, res) => {
     // --- 🕒 1. DYNAMIC DATE FILTER LOGIC ---
     let matchQuery = { status: "completed" };
 
-    const now = new Date();
-    const startOfToday = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-    startOfToday.setHours(0, 0, 0, 0);
+    
+const now = new Date();
+
+// IST offset = +5:30
+const IST_OFFSET = 5.5 * 60 * 60 * 1000;
+
+// Convert now → IST
+const nowIST = new Date(now.getTime() + IST_OFFSET);
+
+// Start of today in IST
+const startOfTodayIST = new Date(nowIST);
+startOfTodayIST.setHours(0, 0, 0, 0);
+
+// Convert back to UTC for MongoDB
+const startOfToday = new Date(startOfTodayIST.getTime() - IST_OFFSET);
+
 
     if (range === '5min') {
       matchQuery["createdAt"] = { $gte: new Date(now.getTime() - 5 * 60000) };
