@@ -1,14 +1,17 @@
 const Income = require("../models/Income");
+const { getRateCoinConfig } = require("../config/RateCoinConfig");
 
-const COIN_TO_RUPEE = 0.62;
 const MIN_WITHDRAW_COINS = 50;
 
 exports.requestWithdraw = async (req, res) => {
+  const rateConfig = await getRateCoinConfig();
+const coinToRupee = rateConfig.hostCoinValue;
+const minWithdraw = rateConfig.minimumWithdrawalAmount;
   try {
     const userId = req.user.id;
 
     const income = await Income.findOne({ userId });
-    if (!income || income.totalEarnings < MIN_WITHDRAW_COINS) {
+    if (!income || income.totalEarnings < minWithdraw) {
       return res.status(400).json({
         success: false,
         message: "Insufficient balance for withdrawal"
@@ -16,7 +19,7 @@ exports.requestWithdraw = async (req, res) => {
     }
 
     const coins = income.totalEarnings;
-    const rupees = Math.floor(coins * COIN_TO_RUPEE);
+    const rupees = Math.floor(coins * coinToRupee);
 
     // 🔒 Lock coins
     income.totalEarnings = 0;

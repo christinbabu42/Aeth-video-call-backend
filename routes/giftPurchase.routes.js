@@ -137,8 +137,13 @@ router.post("/buy-and-inventory", auth, async (req, res) => {
       await user.save();
     } else {
       // Calculation for Host and Platform
-      const platformCommissionCoins = Number((gift.price * rateConfig.giftCommissionRate).toFixed(2));
-      const hostCoins = Number((gift.price - platformCommissionCoins).toFixed(2));
+const giftCoins = gift.price;
+
+const grossRupees = giftCoins * rateConfig.hostCoinValue;
+const platformRupees = grossRupees * rateConfig.giftCommissionRate;
+const hostRupees = grossRupees - platformRupees;
+
+const hostCoins = Number((hostRupees / rateConfig.hostCoinValue).toFixed(2));
 
       await Wallet.findOneAndUpdate(
         { userId: receiverId },
@@ -260,8 +265,14 @@ router.post("/send", auth, async (req, res) => {
 
     // 2. RECEIVER INCOME LOGIC & COMMISSION
     if (receiverId) {
-      const platformCommissionCoins = Number((gift.price * rateConfig.giftCommissionRate).toFixed(2));
-      const hostCoins = Number((gift.price - platformCommissionCoins).toFixed(2));
+const giftCoins = gift.price;
+
+const grossRupees = giftCoins * rateConfig.hostCoinValue;
+const platformRupees = grossRupees * rateConfig.giftCommissionRate;
+const hostRupees = grossRupees - platformRupees;
+
+const hostCoins = Number((hostRupees / rateConfig.hostCoinValue).toFixed(2));
+const platformCommissionCoins = Number((platformRupees / rateConfig.hostCoinValue).toFixed(2));
 
       await Income.findOneAndUpdate(
         { userId: receiverId },
