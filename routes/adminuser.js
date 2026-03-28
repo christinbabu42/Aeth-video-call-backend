@@ -7,8 +7,7 @@ const RateCoinConfig = require("../models/RateCoinConfig");
 const auth = require("../middlewares/auth");
 const admin = require("../middlewares/admin");
 const Call = require("../models/Call");
-const GiftTransaction = require("../models/GiftTransaction");
-
+const WalletTransaction = require("../models/WalletTransaction");
 
 /**
  * @route   GET /api/admin/stats
@@ -28,15 +27,12 @@ router.get("/stats", auth, admin, async (req, res) => {
     const hostCoinValue = config?.hostCoinValue || 0.45;
 
     // --- 🕒 1. DYNAMIC DATE FILTER LOGIC ---
-    let matchQuery = {
-      status: "completed"
-    };
+    let matchQuery = { status: "completed" };
 
     const now = new Date();
     const startOfToday = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
     startOfToday.setHours(0, 0, 0, 0);
 
-    // Apply filters based on range
     if (range === '5min') {
       matchQuery["createdAt"] = { $gte: new Date(now.getTime() - 5 * 60000) };
     } else if (range === 'today') {
@@ -80,23 +76,31 @@ router.get("/stats", auth, admin, async (req, res) => {
       }
     ]);
 
-    // --- 🎁 2.5 GIFT COMMISSION AGGREGATION (Fixed Approach) ---
-    const giftMatch = {};
+    // --- 🎁 2.5 GIFT COMMISSION (From WalletTransaction Schema) ---
+    const giftMatch = {
+      category: "GIFT_PURCHASE",
+      type: "DEBIT",
+      status: "SUCCESS"
+    };
+
     if (matchQuery.createdAt) {
       giftMatch.createdAt = matchQuery.createdAt;
     }
 
-    const giftCommissionAgg = await GiftTransaction.aggregate([
+    const giftAgg = await WalletTransaction.aggregate([
       { $match: giftMatch },
       {
         $group: {
           _id: null,
-          totalCommissionRupees: { $sum: "$platformCommissionRupees" }
+          totalGiftCoins: { $sum: "$coins" }
         }
       }
     ]);
 
-    const giftCommission = giftCommissionAgg[0]?.totalCommissionRupees || 0;
+    const totalGiftCoins = giftAgg[0]?.totalGiftCoins || 0;
+    
+    // Calculate ₹ earnings from gifts (Coins * hostValue * platformCommissionRate)
+    const giftCommission = totalGiftCoins * hostCoinValue * (config?.giftCommissionRate || 0);
 
     // --- 📊 3. AGGREGATE ALL-TIME STATS ---
     const totalStats = await Call.aggregate([
@@ -112,7 +116,7 @@ router.get("/stats", auth, admin, async (req, res) => {
     const stats = periodStats[0] || { periodRevenue: 0, periodCommission: 0 };
     const allTime = totalStats[0] || { totalRevenue: 0 };
 
-    // 🔥 Total Commission = Call Fee + Gift Fee
+    // 🔥 Final Commission Merge (Call Commission + Gift Commission)
     const totalCommission = (stats.periodCommission || 0) + giftCommission;
 
     // --- 💰 4. PENDING PAYOUTS ---
@@ -141,8 +145,8 @@ router.get("/stats", auth, admin, async (req, res) => {
       activeCalls: 0,
       todayRevenue: Number(stats.periodRevenue.toFixed(2)),
       totalRevenue: Number(allTime.totalRevenue.toFixed(2)),
-      commission: Number(totalCommission.toFixed(2)), // Combined
-      giftCommission: Number(giftCommission.toFixed(2)), // Gift Breakdown
+      commission: Number(totalCommission.toFixed(2)), // Calls + Gifts
+      giftCommission: Number(giftCommission.toFixed(2)), // Gift Only Breakdown
       pendingPayouts: Number(pendingPayouts.toFixed(2))
     });
 
