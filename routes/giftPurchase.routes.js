@@ -136,14 +136,10 @@ router.post("/buy-and-inventory", auth, async (req, res) => {
       }
       await user.save();
     } else {
-      // Calculation for Host and Platform
-const giftCoins = gift.price;
-
-const grossRupees = giftCoins * rateConfig.hostCoinValue;
-const platformRupees = grossRupees * rateConfig.giftCommissionRate;
-const hostRupees = grossRupees - platformRupees;
-
-const hostCoins = Number((hostRupees / rateConfig.hostCoinValue).toFixed(2));
+      // ✅ CORRECT COIN-ONLY LOGIC
+      const giftCoins = gift.price;
+      const platformCommissionCoins = Number((giftCoins * rateConfig.giftCommissionRate).toFixed(2));
+      const hostCoins = Number((giftCoins - platformCommissionCoins).toFixed(2));
 
       await Wallet.findOneAndUpdate(
         { userId: receiverId },
@@ -166,44 +162,38 @@ const hostCoins = Number((hostRupees / rateConfig.hostCoinValue).toFixed(2));
         gift: giftId,
         quantity: 1
       });
+
       // 🔴 LIVE STREAM GIFT TRACKING
+      const activeStream = await LiveStream.findOne({
+        hostId: receiverId,
+        status: "streaming"
+      });
 
-          // Find active stream of receiver (host)
-          const activeStream = await LiveStream.findOne({
-            hostId: receiverId,
-            status: "streaming"
-          });
+      if (activeStream) {
+        await LiveStream.findByIdAndUpdate(activeStream._id, {
+          $inc: { totalCoinsEarned: hostCoins }
+        });
 
-          if (activeStream) {
-
-            // 1️⃣ Increase total coins earned in stream
-            await LiveStream.findByIdAndUpdate(activeStream._id, {
-              $inc: { totalCoinsEarned: hostCoins }
-            });
-
-            // 2️⃣ Update viewer session gift count
-            await LiveStreamViewer.findOneAndUpdate(
-              {
-                liveStreamId: activeStream._id,
-                userId: req.user.id,
-                leftAt: null
-              },
-              {
-                $inc: { totalGiftsSentInSession: 1 }
-              }
-            );
+        await LiveStreamViewer.findOneAndUpdate(
+          {
+            liveStreamId: activeStream._id,
+            userId: req.user.id,
+            leftAt: null
+          },
+          {
+            $inc: { totalGiftsSentInSession: 1 }
           }
+        );
+      }
     }
 
     // 4. SOCKET UPDATES
     const io = req.app.get("socketio");
     
-    // Update Sender Wallet
     io.to(String(req.user.id)).emit("walletUpdated", {
       coins: senderWallet.coins
     });
 
-    // Emit totalEarnings update to the receiver
     if (receiverId) {
       const receiverIncome = await Income.findOne({ userId: receiverId });
       if (receiverIncome) {
@@ -265,14 +255,10 @@ router.post("/send", auth, async (req, res) => {
 
     // 2. RECEIVER INCOME LOGIC & COMMISSION
     if (receiverId) {
-const giftCoins = gift.price;
-
-const grossRupees = giftCoins * rateConfig.hostCoinValue;
-const platformRupees = grossRupees * rateConfig.giftCommissionRate;
-const hostRupees = grossRupees - platformRupees;
-
-const hostCoins = Number((hostRupees / rateConfig.hostCoinValue).toFixed(2));
-const platformCommissionCoins = Number((platformRupees / rateConfig.hostCoinValue).toFixed(2));
+      // ✅ CORRECT COIN-ONLY LOGIC
+      const giftCoins = gift.price;
+      const platformCommissionCoins = Number((giftCoins * rateConfig.giftCommissionRate).toFixed(2));
+      const hostCoins = Number((giftCoins - platformCommissionCoins).toFixed(2));
 
       await Income.findOneAndUpdate(
         { userId: receiverId },
@@ -290,7 +276,7 @@ const platformCommissionCoins = Number((platformRupees / rateConfig.hostCoinValu
         { upsert: true }
       );
 
-      // Save Platform Commission (Using SENDER ID to satisfy "required" validator)
+      // Save Platform Commission (Metadata using host rate for reference)
       await WalletTransaction.create({
         userId: req.user.id, 
         type: "CREDIT",
@@ -307,43 +293,40 @@ const platformCommissionCoins = Number((platformRupees / rateConfig.hostCoinValu
         gift: giftId,
         quantity: 1
       });
+
       // 🔴 LIVE STREAM GIFT TRACKING
+      const activeStream = await LiveStream.findOne({
+        hostId: receiverId,
+        status: "streaming"
+      });
 
-const activeStream = await LiveStream.findOne({
-  hostId: receiverId,
-  status: "streaming"
-});
+      if (activeStream) {
+        await LiveStream.findByIdAndUpdate(activeStream._id, {
+          $inc: { totalCoinsEarned: hostCoins }
+        });
 
-if (activeStream) {
-
-  await LiveStream.findByIdAndUpdate(activeStream._id, {
-    $inc: { totalCoinsEarned: hostCoins }
-  });
-
-  await LiveStreamViewer.findOneAndUpdate(
-    {
-      liveStreamId: activeStream._id,
-      userId: req.user.id,
-      leftAt: null
-    },
-    {
-      $inc: { totalGiftsSentInSession: 1 }
-    }
-  );
-}
+        await LiveStreamViewer.findOneAndUpdate(
+          {
+            liveStreamId: activeStream._id,
+            userId: req.user.id,
+            leftAt: null
+          },
+          {
+            $inc: { totalGiftsSentInSession: 1 }
+          }
+        );
+      }
     }
 
     // 3. SOCKET UPDATES
     const io = req.app.get("socketio");
     
-    // Update Sender Wallet if deduction happened from wallet
     if (senderWallet) {
         io.to(String(req.user.id)).emit("walletUpdated", {
             coins: senderWallet.coins
         });
     }
 
-    // Emit totalEarnings update to the receiver
     if (receiverId) {
       const receiverIncome = await Income.findOne({ userId: receiverId });
       if (receiverIncome) {
