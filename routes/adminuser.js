@@ -7,6 +7,7 @@ const RateCoinConfig = require("../models/RateCoinConfig");
 const auth = require("../middlewares/auth");
 const admin = require("../middlewares/admin");
 const Call = require("../models/Call");
+const GiftTransaction = require("../models/GiftTransaction");
 
 
 /**
@@ -35,7 +36,7 @@ router.get("/stats", auth, admin, async (req, res) => {
     const startOfToday = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
     startOfToday.setHours(0, 0, 0, 0);
 
-    // Apply filters based on range (using createdAt directly for Call schema)
+    // Apply filters based on range
     if (range === '5min') {
       matchQuery["createdAt"] = { $gte: new Date(now.getTime() - 5 * 60000) };
     } else if (range === 'today') {
@@ -79,7 +80,25 @@ router.get("/stats", auth, admin, async (req, res) => {
       }
     ]);
 
-    // --- 📊 3. AGGREGATE ALL-TIME STATS (For the Total Card) ---
+    // --- 🎁 2.5 GIFT COMMISSION AGGREGATION (Fixed Approach) ---
+    const giftMatch = {};
+    if (matchQuery.createdAt) {
+      giftMatch.createdAt = matchQuery.createdAt;
+    }
+
+    const giftCommissionAgg = await GiftTransaction.aggregate([
+      { $match: giftMatch },
+      {
+        $group: {
+          _id: null,
+          totalCommissionRupees: { $sum: "$platformCommissionRupees" }
+        }
+      }
+    ]);
+
+    const giftCommission = giftCommissionAgg[0]?.totalCommissionRupees || 0;
+
+    // --- 📊 3. AGGREGATE ALL-TIME STATS ---
     const totalStats = await Call.aggregate([
       { $match: { status: "completed" } },
       {
@@ -93,7 +112,10 @@ router.get("/stats", auth, admin, async (req, res) => {
     const stats = periodStats[0] || { periodRevenue: 0, periodCommission: 0 };
     const allTime = totalStats[0] || { totalRevenue: 0 };
 
-    // --- 💰 4. CORRECTED PENDING PAYOUTS (Matches Withdrawal Logic) ---
+    // 🔥 Total Commission = Call Fee + Gift Fee
+    const totalCommission = (stats.periodCommission || 0) + giftCommission;
+
+    // --- 💰 4. PENDING PAYOUTS ---
     const pendingWithdrawals = await Income.aggregate([
       { $unwind: "$history" },
       { 
@@ -117,9 +139,10 @@ router.get("/stats", auth, admin, async (req, res) => {
       totalHosts,
       onlineHosts,
       activeCalls: 0,
-      todayRevenue: Number(stats.periodRevenue.toFixed(2)), // maps to Period Revenue
+      todayRevenue: Number(stats.periodRevenue.toFixed(2)),
       totalRevenue: Number(allTime.totalRevenue.toFixed(2)),
-      commission: Number(stats.periodCommission.toFixed(2)), // maps to Net Commission
+      commission: Number(totalCommission.toFixed(2)), // Combined
+      giftCommission: Number(giftCommission.toFixed(2)), // Gift Breakdown
       pendingPayouts: Number(pendingPayouts.toFixed(2))
     });
 
@@ -128,6 +151,7 @@ router.get("/stats", auth, admin, async (req, res) => {
     res.status(500).json({ success: false, message: "Server Error" });
   }
 });
+
 /**
  * @route   GET /api/admin/users
  * @desc    Fetch all users with their current wallet balances
