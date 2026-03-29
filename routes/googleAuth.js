@@ -34,6 +34,10 @@ router.post("/google", async (req, res) => {
   try {
     const { idToken, accessToken, isAdminLogin } = req.body;
 
+        // ✅ ADD DEBUG LOGS HERE
+    console.log("ENV CLIENT ID:", process.env.GOOGLE_WEB_CLIENT_ID);
+    console.log("FRONTEND TOKEN RECEIVED:", idToken ? "YES" : "NO");
+
     if (!idToken && !accessToken) {
       return res.status(400).json({ message: "Staff Token (ID or Access) required" });
     }
