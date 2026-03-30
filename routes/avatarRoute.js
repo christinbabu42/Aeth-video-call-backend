@@ -4,6 +4,8 @@ const Avatar = require("../models/Avatar");
 
 // GET avatars by gender
 router.get("/", async (req, res) => {
+  console.log("🔥 Avatar route hit");
+
   try {
     const { gender } = req.query;
 
