@@ -75,7 +75,8 @@ app.use("/api/admin/video", require("./routes/adminVideoRoute"));
 app.use("/agora", require("./routes/agoraTokenRoute.js"));
 app.use("/api/iap",require("./routes/GoogleBillingRouteiap.js"));
 app.use("/api/bank",require("./routes/bankRoutes.js"));
-
+app.use("/api/avatar", require("./routes/avatarRoute"));
+app.use("/api/admin/avatar", require("./routes/adminAvatarRoute"));
 
 
 
