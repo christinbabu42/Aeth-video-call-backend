@@ -56,7 +56,7 @@ const initSocket = (server, extraOptions = {}) => {
 
     // ✅ FETCH USER FIRST (🔥 FIX)
     const user = await User.findById(socket.userId);
-    
+
     // 🚫 BLOCK IF DELETED OR BANNED
     if (!user || user.isDeleted || user.actionstatus !== "active") {
       console.log(`🚫 Refusing socket: ${userIdStr} is deleted/banned.`);
@@ -66,6 +66,17 @@ const initSocket = (server, extraOptions = {}) => {
 
     // ✅ AUTOMATIC ROOM JOINING
     socket.join(userIdStr);
+
+    // 🔥 ADDED: GENDER ROOM JOIN (Logic strictly based on user model)
+    if (user?.gender === "female") {
+      socket.join("female-users");
+      console.log(`👩 ${userIdStr} joined female-users`);
+    }
+
+    if (user?.gender === "male") {
+      socket.join("male-users");
+      console.log(`👨 ${userIdStr} joined male-users`);
+    }
 
     // ✅ SET USER ONLINE IMMEDIATELY
     try {

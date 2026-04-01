@@ -6,6 +6,9 @@ const Wallet = require("../models/Wallet");
 const authMiddleware = require("../middlewares/auth");
 const { calculateLevel } = require("../utils/levelCalculator");
 
+// ✅ IMPORT SOCKET IO (Adjust path to your socket.js file)
+const { getIO } = require("../socket"); 
+
 const COIN_PACKS = {
   "coins_60": { coins: 60, price: 40 },
   "coins_90": { coins: 90, price: 60 },
@@ -50,17 +53,15 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
       const pack = COIN_PACKS[productId];
       if (!pack) return res.status(400).json({ success: false, message: "Invalid SKU" });
 
-      // 🔄 UPDATE THE WALLET MODEL (instead of User model)
-      // upsert: true ensures a wallet is created if it doesn't exist
+      // 🔄 UPDATE THE WALLET MODEL
       const updatedWallet = await Wallet.findOneAndUpdate(
         { userId: userId },
         { $inc: { coins: pack.coins } },
         { new: true, upsert: true }
       );
 
-            // ✅ 2. Update XP + Level
+      // ✅ 2. Update XP + Level
       const xpEarned = pack.coins;
-
       const user = await User.findById(userId);
       user.xp = (user.xp || 0) + xpEarned;
       user.level = calculateLevel(user.xp);
@@ -69,7 +70,7 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
       // Record the transaction for history
       await Transaction.create({
         user: userId,
-        userId: userId, // Ensure this matches your Transaction schema field
+        userId: userId, 
         type: "purchase",
         coins: pack.coins,
         amountPaid: pack.price,
@@ -79,13 +80,30 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
         verifiedAt: new Date(),
         note: "AWS Mock Purchase"
       });
+
+      // 🔥 EMIT AFTER PURCHASE (CRITICAL)
+      // Check gender and alert female users if a male user recharges
+      try {
+        const io = getIO();
+        console.log("🪙 Purchase confirmed for:", user.nickname || user.name, "| Gender:", user.gender);
+
+        if (user.gender === "male") {
+          console.log("🔥 Emitting 'Big Spender' alert to female-users room");
+          io.to("female-users").emit("coin-purchase-alert", {
+            userId: user._id,
+            name: user.nickname || user.name || "A user",
+          });
+        }
+      } catch (socketErr) {
+        console.error("Socket emission failed, but purchase was successful:", socketErr.message);
+      }
       
-return res.json({ 
-  success: true, 
-  newBalance: updatedWallet.coins,
-  xp: user.xp,
-  level: user.level
-});
+      return res.json({ 
+        success: true, 
+        newBalance: updatedWallet.coins,
+        xp: user.xp,
+        level: user.level
+      });
     }
   } catch (error) {
     console.error("IAP Error:", error);
