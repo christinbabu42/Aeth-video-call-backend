@@ -1,26 +1,39 @@
 const express = require("express");
 const router = express.Router();
+const { google } = require("googleapis"); // ✅ Added for Real Verification
 const User = require("../models/User");
 const Transaction = require("../models/Transaction");
 const Wallet = require("../models/Wallet");
 const authMiddleware = require("../middlewares/auth");
 const { calculateLevel } = require("../utils/levelCalculator");
 
-// ✅ IMPORT SOCKET IO (Adjust path to your socket.js file)
+// ✅ IMPORT SOCKET IO
 const { getIO } = require("../socket"); 
 
+// --- Google Play Auth Setup ---
+const auth = new google.auth.GoogleAuth({
+  keyFile: "service-account.json", 
+  scopes: ["https://www.googleapis.com/auth/androidpublisher"],
+});
+
+const androidpublisher = google.androidpublisher({
+  version: "v3",
+  auth,
+});
+
+// ✅ UPDATED: Only track coins (Ignore backend prices to match Play Console)
 const COIN_PACKS = {
-  "coins_60": { coins: 60, price: 40 },
-  "coins_90": { coins: 90, price: 60 },
-  "coins_200": { coins: 200, price: 125 },
-  "coins_440": { coins: 440, price: 250 },
-  "coins_1200": { coins: 1200, price: 650 },
-  "coins_2500": { coins: 2500, price: 1300 },
-  "coins_5000": { coins: 5000, price: 2500 },
-  "coins_15000": { coins: 15000, price: 7000 },
-  "coins_33000": { coins: 33000, price: 15000 },
-  "coins_65000": { coins: 65000, price: 28000 },
-  "coins_100000": { coins: 100000, price: 40000 },
+  "coins_60": { coins: 40 },
+  "coins_90": { coins: 90 },
+  "coins_200": { coins: 200 },
+  "coins_440": { coins: 440 },
+  "coins_1200": { coins: 1200 },
+  "coins_2500": { coins: 2500 },
+  "coins_5000": { coins: 5000 },
+  "coins_15000": { coins: 15000 },
+  "coins_33000": { coins: 33000 },
+  "coins_65000": { coins: 65000 },
+  "coins_100000": { coins: 100000 },
 };
 
 // 🟢 GET: Health Check
@@ -28,18 +41,7 @@ router.get("/check", (req, res) => {
   res.send("✅ IAP Route is Active and Reachable on AWS!");
 });
 
-// 🟢 POST: Auth-Free Mock (Diagnostic Only)
-router.post("/verify-purchase-mock", async (req, res) => {
-  const { productId } = req.body;
-  const pack = COIN_PACKS[productId] || { coins: 0 };
-  res.json({ 
-    success: true, 
-    message: "Bypassed Auth: Mock route working!",
-    potentialCoins: pack.coins 
-  });
-});
-
-// 💰 POST: Main Verification (Updated to sync with Wallet Schema)
+// 💰 POST: Main Verification (REAL GOOGLE PLAY VERIFICATION)
 router.post("/verify-purchase", authMiddleware, async (req, res) => {
   const { purchaseToken, productId } = req.body;
   const userId = req.user.id;
@@ -49,65 +51,103 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
   }
 
   try {
-    if (purchaseToken.startsWith("MOCK_TOKEN_")) {
-      const pack = COIN_PACKS[productId];
-      if (!pack) return res.status(400).json({ success: false, message: "Invalid SKU" });
+    // ✅ 1. VERIFY WITH GOOGLE
+    const result = await androidpublisher.purchases.products.get({
+      packageName: "com.aeth.meet", // 🔥 Ensure this matches your package name
+      productId: productId,
+      token: purchaseToken,
+    });
 
-      // 🔄 UPDATE THE WALLET MODEL
-      const updatedWallet = await Wallet.findOneAndUpdate(
-        { userId: userId },
-        { $inc: { coins: pack.coins } },
-        { new: true, upsert: true }
-      );
-
-      // ✅ 2. Update XP + Level
-      const xpEarned = pack.coins;
-      const user = await User.findById(userId);
-      user.xp = (user.xp || 0) + xpEarned;
-      user.level = calculateLevel(user.xp);
-      await user.save();
-
-      // Record the transaction for history
-      await Transaction.create({
-        user: userId,
-        userId: userId, 
-        type: "purchase",
-        coins: pack.coins,
-        amountPaid: pack.price,
-        productId,
-        purchaseToken,
-        status: "completed",
-        verifiedAt: new Date(),
-        note: "AWS Mock Purchase"
-      });
-
-      // 🔥 EMIT AFTER PURCHASE (CRITICAL)
-      // Check gender and alert female users if a male user recharges
-      try {
-        const io = getIO();
-        console.log("🪙 Purchase confirmed for:", user.nickname || user.name, "| Gender:", user.gender);
-
-        if (user.gender === "male") {
-          console.log("🔥 Emitting 'Big Spender' alert to female-users room");
-          io.to("female-users").emit("coin-purchase-alert", {
-            userId: user._id,
-            name: user.nickname || user.name || "A user",
-          });
-        }
-      } catch (socketErr) {
-        console.error("Socket emission failed, but purchase was successful:", socketErr.message);
-      }
-      
-      return res.json({ 
-        success: true, 
-        newBalance: updatedWallet.coins,
-        xp: user.xp,
-        level: user.level
-      });
+    if (result.data.purchaseState !== 0) {
+      return res.status(400).json({ success: false, message: "Invalid purchase state" });
     }
+
+    // ✅ 2. ACKNOWLEDGE PURCHASE (CRITICAL: Prevents automatic refunds)
+    await androidpublisher.purchases.products.acknowledge({
+      packageName: "com.aeth.meet",
+      productId: productId,
+      token: purchaseToken,
+    });
+
+    // ✅ 3. PROCESS COINS
+    const pack = COIN_PACKS[productId];
+    if (!pack) return res.status(400).json({ success: false, message: "Invalid SKU" });
+
+    // 🔄 UPDATE THE WALLET MODEL
+    const updatedWallet = await Wallet.findOneAndUpdate(
+      { userId: userId },
+      { $inc: { coins: pack.coins } },
+      { new: true, upsert: true }
+    );
+
+    // ✅ 4. Update XP + Level
+    const xpEarned = pack.coins;
+    const user = await User.findById(userId);
+    user.xp = (user.xp || 0) + xpEarned;
+    user.level = calculateLevel(user.xp);
+    await user.save();
+
+    // ✅ 5. Record the transaction (amountPaid: 0 because we trust Play Console price)
+    await Transaction.create({
+      user: userId,
+      userId: userId, 
+      type: "purchase",
+      coins: pack.coins,
+      amountPaid: 0, 
+      productId,
+      purchaseToken,
+      status: "completed",
+      verifiedAt: new Date(),
+      note: "Google Play Official Purchase"
+    });
+
+    // 🔥 EMIT AFTER PURCHASE
+    try {
+      const io = getIO();
+      if (user.gender === "male") {
+        io.to("female-users").emit("coin-purchase-alert", {
+          userId: user._id,
+          name: user.nickname || user.name || "A user",
+        });
+      }
+    } catch (socketErr) {
+      console.error("Socket emission failed:", socketErr.message);
+    }
+    
+    return res.json({ 
+      success: true, 
+      newBalance: updatedWallet.coins,
+      xp: user.xp,
+      level: user.level
+    });
+
   } catch (error) {
-    console.error("IAP Error:", error);
-    res.status(500).json({ success: false, message: error.message });
+    // Logic for Mock Token (Diagnostic only - can be removed for production)
+    if (purchaseToken.startsWith("MOCK_TOKEN_")) {
+        const pack = COIN_PACKS[productId];
+        if (!pack) return res.status(400).json({ success: false, message: "Invalid SKU" });
+
+        const updatedWallet = await Wallet.findOneAndUpdate(
+            { userId: userId },
+            { $inc: { coins: pack.coins } },
+            { new: true, upsert: true }
+        );
+
+        const user = await User.findById(userId);
+        user.xp = (user.xp || 0) + pack.coins;
+        user.level = calculateLevel(user.xp);
+        await user.save();
+
+        return res.json({ 
+            success: true, 
+            newBalance: updatedWallet.coins,
+            xp: user.xp,
+            level: user.level
+        });
+    }
+
+    console.error("IAP Verification Error:", error.message);
+    res.status(500).json({ success: false, message: "Verification Failed" });
   }
 });
 
