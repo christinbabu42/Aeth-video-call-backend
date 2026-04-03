@@ -21,7 +21,7 @@ const androidpublisher = google.androidpublisher({
   auth,
 });
 
-// ✅ UPDATED: Only track coins (Ignore backend prices to match Play Console)
+// ✅ UPDATED: Only track coins (Price is managed in Google Play Console)
 const COIN_PACKS = {
   "coins_40": { coins: 40 },
   "coins_90": { coins: 90 },
@@ -123,7 +123,7 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
 
   } catch (error) {
     // Logic for Mock Token (Diagnostic only - can be removed for production)
-    if (purchaseToken.startsWith("MOCK_TOKEN_")) {
+    if (purchaseToken && purchaseToken.startsWith("MOCK_TOKEN_")) {
         const pack = COIN_PACKS[productId];
         if (!pack) return res.status(400).json({ success: false, message: "Invalid SKU" });
 
