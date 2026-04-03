@@ -23,7 +23,7 @@ const androidpublisher = google.androidpublisher({
 
 // ✅ UPDATED: Only track coins (Ignore backend prices to match Play Console)
 const COIN_PACKS = {
-  "coins_60": { coins: 40 },
+  "coins_40": { coins: 40 },
   "coins_90": { coins: 90 },
   "coins_200": { coins: 200 },
   "coins_440": { coins: 440 },
