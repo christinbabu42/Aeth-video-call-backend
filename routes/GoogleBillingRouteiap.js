@@ -65,10 +65,27 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
         return res.json({ success: true, newBalance: wallet.coins, xp: user.xp, level: user.level });
     }
 
-    // 🛡️ 1. IDEMPOTENCY CHECK: Prevent duplicate processing (First Pass)
-    const existingTx = await Transaction.findOne({ purchaseToken });
-    if (existingTx) {
-      console.log("⚠️ Already processed transaction (Check 1):", purchaseToken);
+    // 🛡️ 1. ATOMIC IDEMPOTENCY LOCK: Create a "Pending" transaction immediately
+    // This blocks race conditions before we even talk to Google
+    const tx = await Transaction.findOneAndUpdate(
+      { purchaseToken },
+      {
+        $setOnInsert: {
+          user: userId,
+          type: "purchase",
+          coins: COIN_PACKS[productId]?.coins || 0,
+          productId,
+          purchaseToken,
+          status: "pending",
+          verifiedAt: new Date(),
+        }
+      },
+      { upsert: true, returnDocument: 'after' }
+    );
+
+    // If the transaction is already "completed", exit immediately
+    if (tx.status === "completed") {
+      console.log("⚠️ Already processed safely:", purchaseToken);
       const currentWallet = await Wallet.findOne({ userId });
       const currentUser = await User.findById(userId);
       return res.json({ 
@@ -101,7 +118,7 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
       console.log("⚠️ Consume skipped (item might already be consumed or pending)");
     }
 
-    // 💰 4. UPDATE DATA
+    // 💰 4. UPDATE DATA (Wallet & XP)
     const pack = COIN_PACKS[productId];
     if (!pack) return res.status(400).json({ success: false, message: "Invalid SKU" });
 
@@ -116,31 +133,11 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
     user.level = calculateLevel(user.xp);
     await user.save();
 
-    // 📝 5. LOG TRANSACTION (ATOMIC UPSERT to prevent Race Conditions)
-    try {
-      await Transaction.findOneAndUpdate(
-        { purchaseToken },
-        {
-          $setOnInsert: {
-            user: userId,
-            type: "purchase",
-            coins: pack.coins,
-            productId,
-            purchaseToken,
-            status: "completed",
-            verifiedAt: new Date(),
-          }
-        },
-        { upsert: true, new: true }
-      );
-    } catch (dbErr) {
-      if (dbErr.code === 11000) {
-        console.log("⚠️ Duplicate transaction blocked by Mongo index:", purchaseToken);
-        // We don't throw here because the user was already given coins above
-      } else {
-        throw dbErr;
-      }
-    }
+    // ✅ 5. FINALIZE TRANSACTION: Mark as "completed"
+    await Transaction.updateOne(
+      { purchaseToken },
+      { $set: { status: "completed" } }
+    );
 
     // 📢 6. SOCKET ALERT
     try {
