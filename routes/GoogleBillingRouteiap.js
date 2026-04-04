@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { google } = require("googleapis"); // ✅ Added for Real Verification
+const { google } = require("googleapis");
 const User = require("../models/User");
 const Transaction = require("../models/Transaction");
 const Wallet = require("../models/Wallet");
@@ -21,7 +21,10 @@ const androidpublisher = google.androidpublisher({
   auth,
 });
 
-// ✅ UPDATED: Only track coins (Price is managed in Google Play Console)
+// ✅ PACKAGE CONFIGURATION
+const PACKAGE_NAME = "com.aeth.videocallapp";
+
+// ✅ UPDATED: Full SKU mapping to coin values
 const COIN_PACKS = {
   "coins_40": { coins: 40 },
   "coins_90": { coins: 90 },
@@ -33,7 +36,6 @@ const COIN_PACKS = {
   "coins_15000": { coins: 15000 },
   "coins_33000": { coins: 33000 },
   "coins_65000": { coins: 65000 },
-  "coins_100000": { coins: 100000 },
 };
 
 // 🟢 GET: Health Check
@@ -41,7 +43,7 @@ router.get("/check", (req, res) => {
   res.send("✅ IAP Route is Active and Reachable on AWS!");
 });
 
-// 💰 POST: Main Verification (REAL GOOGLE PLAY VERIFICATION)
+// 💰 POST: Main Verification
 router.post("/verify-purchase", authMiddleware, async (req, res) => {
   const { purchaseToken, productId } = req.body;
   const userId = req.user.id;
@@ -51,9 +53,9 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
   }
 
   try {
-    // ✅ 1. VERIFY WITH GOOGLE
+    // ✅ 1. VERIFY WITH GOOGLE (Updated Package Name)
     const result = await androidpublisher.purchases.products.get({
-      packageName: "com.aeth.meet", // 🔥 Ensure this matches your package name
+      packageName: PACKAGE_NAME, 
       productId: productId,
       token: purchaseToken,
     });
@@ -62,9 +64,9 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid purchase state" });
     }
 
-    // ✅ 2. ACKNOWLEDGE PURCHASE (CRITICAL: Prevents automatic refunds)
+    // ✅ 2. ACKNOWLEDGE PURCHASE (Updated Package Name)
     await androidpublisher.purchases.products.acknowledge({
-      packageName: "com.aeth.meet",
+      packageName: PACKAGE_NAME,
       productId: productId,
       token: purchaseToken,
     });
@@ -73,7 +75,6 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
     const pack = COIN_PACKS[productId];
     if (!pack) return res.status(400).json({ success: false, message: "Invalid SKU" });
 
-    // 🔄 UPDATE THE WALLET MODEL
     const updatedWallet = await Wallet.findOneAndUpdate(
       { userId: userId },
       { $inc: { coins: pack.coins } },
@@ -87,7 +88,7 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
     user.level = calculateLevel(user.xp);
     await user.save();
 
-    // ✅ 5. Record the transaction (amountPaid: 0 because we trust Play Console price)
+    // ✅ 5. Record the transaction
     await Transaction.create({
       user: userId,
       userId: userId, 
@@ -122,7 +123,7 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
     });
 
   } catch (error) {
-    // Logic for Mock Token (Diagnostic only - can be removed for production)
+    // MOCK TOKEN Logic for local dev
     if (purchaseToken && purchaseToken.startsWith("MOCK_TOKEN_")) {
         const pack = COIN_PACKS[productId];
         if (!pack) return res.status(400).json({ success: false, message: "Invalid SKU" });
