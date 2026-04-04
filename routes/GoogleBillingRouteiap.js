@@ -146,9 +146,17 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
     });
 
   } catch (error) {
-    // 🚨 7. IMPROVED LOGGING
+    // 🚨 7. IMPROVED GOOGLE ERROR LOGGING
     console.error("🔥 FULL IAP ERROR:", error);
-    res.status(500).json({ success: false, message: "Verification Failed" });
+    console.error("🔥 GOOGLE ERROR DATA:", error?.response?.data);
+    console.error("🔥 GOOGLE ERROR STATUS:", error?.response?.status);
+    console.error("🔥 GOOGLE ERROR MESSAGE:", error?.message);
+
+    res.status(500).json({ 
+      success: false, 
+      message: error.message,
+      googleError: error?.response?.data
+    });
   }
 });
 
