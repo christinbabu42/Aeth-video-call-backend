@@ -51,11 +51,11 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
         const pack = COIN_PACKS[productId];
         if (!pack) return res.status(400).json({ success: false, message: "Invalid SKU" });
 
-        const wallet = await Wallet.findOneAndUpdate(
-            { userId },
-            { $inc: { coins: pack.coins } },
-            { new: true, upsert: true }
-        );
+const wallet = await Wallet.findOneAndUpdate(
+  { userId },
+  { $inc: { coins: pack.coins } },
+  { returnDocument: 'after', upsert: true }
+);
 
         const user = await User.findById(userId);
         user.xp = (user.xp || 0) + pack.coins;
@@ -105,11 +105,11 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
     const pack = COIN_PACKS[productId];
     if (!pack) return res.status(400).json({ success: false, message: "Invalid SKU" });
 
-    const updatedWallet = await Wallet.findOneAndUpdate(
-      { userId },
-      { $inc: { coins: pack.coins } },
-      { new: true, upsert: true }
-    );
+const updatedWallet = await Wallet.findOneAndUpdate(
+  { userId },
+  { $inc: { coins: pack.coins } },
+  { returnDocument: 'after', upsert: true }
+);
 
     const user = await User.findById(userId);
     user.xp = (user.xp || 0) + pack.coins;
