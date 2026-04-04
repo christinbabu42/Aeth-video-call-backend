@@ -6,11 +6,8 @@ const Transaction = require("../models/Transaction");
 const Wallet = require("../models/Wallet");
 const authMiddleware = require("../middlewares/auth");
 const { calculateLevel } = require("../utils/levelCalculator");
-
-// ✅ IMPORT SOCKET IO
 const { getIO } = require("../socket"); 
 
-// --- Google Play Auth Setup ---
 const auth = new google.auth.GoogleAuth({
   keyFile: "service-account.json", 
   scopes: ["https://www.googleapis.com/auth/androidpublisher"],
@@ -21,10 +18,8 @@ const androidpublisher = google.androidpublisher({
   auth,
 });
 
-// ✅ PACKAGE CONFIGURATION
 const PACKAGE_NAME = "com.aeth.videocallapp";
 
-// ✅ UPDATED: Full SKU mapping to coin values
 const COIN_PACKS = {
   "coins_40": { coins: 40 },
   "coins_90": { coins: 90 },
@@ -38,12 +33,10 @@ const COIN_PACKS = {
   "coins_65000": { coins: 65000 },
 };
 
-// 🟢 GET: Health Check
 router.get("/check", (req, res) => {
   res.send("✅ IAP Route is Active and Reachable on AWS!");
 });
 
-// 💰 POST: Main Verification
 router.post("/verify-purchase", authMiddleware, async (req, res) => {
   const { purchaseToken, productId } = req.body;
   const userId = req.user.id;
@@ -53,7 +46,26 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
   }
 
   try {
-    // ✅ 1. VERIFY WITH GOOGLE (Updated Package Name)
+    // 🧪 Handle Local Mocking (only if token starts with MOCK_)
+    if (purchaseToken.startsWith("MOCK_TOKEN_")) {
+        const pack = COIN_PACKS[productId];
+        if (!pack) return res.status(400).json({ success: false, message: "Invalid SKU" });
+
+        const wallet = await Wallet.findOneAndUpdate(
+            { userId },
+            { $inc: { coins: pack.coins } },
+            { new: true, upsert: true }
+        );
+
+        const user = await User.findById(userId);
+        user.xp = (user.xp || 0) + pack.coins;
+        user.level = calculateLevel(user.xp);
+        await user.save();
+
+        return res.json({ success: true, newBalance: wallet.coins, xp: user.xp, level: user.level });
+    }
+
+    // 🌐 REAL GOOGLE VERIFICATION
     const result = await androidpublisher.purchases.products.get({
       packageName: PACKAGE_NAME, 
       productId: productId,
@@ -64,56 +76,49 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid purchase state" });
     }
 
-    // ✅ 2. ACKNOWLEDGE PURCHASE (Updated Package Name)
+    // 🤝 ACKNOWLEDGE (Consumes the product so it can be bought again)
     await androidpublisher.purchases.products.acknowledge({
       packageName: PACKAGE_NAME,
       productId: productId,
       token: purchaseToken,
     });
 
-    // ✅ 3. PROCESS COINS
+    // 💰 UPDATE DATA
     const pack = COIN_PACKS[productId];
     if (!pack) return res.status(400).json({ success: false, message: "Invalid SKU" });
 
     const updatedWallet = await Wallet.findOneAndUpdate(
-      { userId: userId },
+      { userId },
       { $inc: { coins: pack.coins } },
       { new: true, upsert: true }
     );
 
-    // ✅ 4. Update XP + Level
-    const xpEarned = pack.coins;
     const user = await User.findById(userId);
-    user.xp = (user.xp || 0) + xpEarned;
+    user.xp = (user.xp || 0) + pack.coins;
     user.level = calculateLevel(user.xp);
     await user.save();
 
-    // ✅ 5. Record the transaction
+    // 📝 LOG TRANSACTION
     await Transaction.create({
       user: userId,
-      userId: userId, 
       type: "purchase",
       coins: pack.coins,
-      amountPaid: 0, 
       productId,
       purchaseToken,
       status: "completed",
       verifiedAt: new Date(),
-      note: "Google Play Official Purchase"
     });
 
-    // 🔥 EMIT AFTER PURCHASE
+    // 📢 SOCKET ALERT
     try {
       const io = getIO();
       if (user.gender === "male") {
         io.to("female-users").emit("coin-purchase-alert", {
           userId: user._id,
-          name: user.nickname || user.name || "A user",
+          name: user.nickname || "A user",
         });
       }
-    } catch (socketErr) {
-      console.error("Socket emission failed:", socketErr.message);
-    }
+    } catch (sErr) { console.error("Socket err ignored"); }
     
     return res.json({ 
       success: true, 
@@ -123,30 +128,6 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
     });
 
   } catch (error) {
-    // MOCK TOKEN Logic for local dev
-    if (purchaseToken && purchaseToken.startsWith("MOCK_TOKEN_")) {
-        const pack = COIN_PACKS[productId];
-        if (!pack) return res.status(400).json({ success: false, message: "Invalid SKU" });
-
-        const updatedWallet = await Wallet.findOneAndUpdate(
-            { userId: userId },
-            { $inc: { coins: pack.coins } },
-            { new: true, upsert: true }
-        );
-
-        const user = await User.findById(userId);
-        user.xp = (user.xp || 0) + pack.coins;
-        user.level = calculateLevel(user.xp);
-        await user.save();
-
-        return res.json({ 
-            success: true, 
-            newBalance: updatedWallet.coins,
-            xp: user.xp,
-            level: user.level
-        });
-    }
-
     console.error("IAP Verification Error:", error.message);
     res.status(500).json({ success: false, message: "Verification Failed" });
   }
