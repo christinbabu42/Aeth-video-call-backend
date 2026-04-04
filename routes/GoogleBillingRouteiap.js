@@ -65,7 +65,21 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
         return res.json({ success: true, newBalance: wallet.coins, xp: user.xp, level: user.level });
     }
 
-    // 🌐 REAL GOOGLE VERIFICATION
+    // 🛡️ 1. IDEMPOTENCY CHECK: Prevent duplicate processing
+    const existingTx = await Transaction.findOne({ purchaseToken });
+    if (existingTx) {
+      console.log("⚠️ Already processed transaction:", purchaseToken);
+      const currentWallet = await Wallet.findOne({ userId });
+      const currentUser = await User.findById(userId);
+      return res.json({ 
+        success: true, 
+        newBalance: currentWallet?.coins || 0,
+        xp: currentUser?.xp || 0,
+        level: currentUser?.level || 1
+      });
+    }
+
+    // 🌐 2. REAL GOOGLE VERIFICATION
     const result = await androidpublisher.purchases.products.get({
       packageName: PACKAGE_NAME, 
       productId: productId,
@@ -76,14 +90,18 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid purchase state" });
     }
 
-    // 🤝 ACKNOWLEDGE (Consumes the product so it can be bought again)
-    await androidpublisher.purchases.products.acknowledge({
-      packageName: PACKAGE_NAME,
-      productId: productId,
-      token: purchaseToken,
-    });
+    // 🤝 3. CONSUME: Use consume instead of acknowledge for consumable coins
+    try {
+      await androidpublisher.purchases.products.consume({
+        packageName: PACKAGE_NAME,
+        productId: productId,
+        token: purchaseToken,
+      });
+    } catch (consumeErr) {
+      console.log("⚠️ Consume skipped (item might already be consumed or pending)");
+    }
 
-    // 💰 UPDATE DATA
+    // 💰 4. UPDATE DATA
     const pack = COIN_PACKS[productId];
     if (!pack) return res.status(400).json({ success: false, message: "Invalid SKU" });
 
@@ -98,7 +116,7 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
     user.level = calculateLevel(user.xp);
     await user.save();
 
-    // 📝 LOG TRANSACTION
+    // 📝 5. LOG TRANSACTION (Now prevents duplicates on next call)
     await Transaction.create({
       user: userId,
       type: "purchase",
@@ -109,7 +127,7 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
       verifiedAt: new Date(),
     });
 
-    // 📢 SOCKET ALERT
+    // 📢 6. SOCKET ALERT
     try {
       const io = getIO();
       if (user.gender === "male") {
@@ -128,7 +146,8 @@ router.post("/verify-purchase", authMiddleware, async (req, res) => {
     });
 
   } catch (error) {
-    console.error("IAP Verification Error:", error.message);
+    // 🚨 7. IMPROVED LOGGING
+    console.error("🔥 FULL IAP ERROR:", error);
     res.status(500).json({ success: false, message: "Verification Failed" });
   }
 });
