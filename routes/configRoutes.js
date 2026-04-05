@@ -5,7 +5,9 @@ const Config = require('../models/Config');
 router.get('/settings', async (req, res) => {
   try {
     const settings = await Config.find({});
-    // Convert array to a simple object { key: value }
+    
+    console.log("🔥 SETTINGS FROM DB:", settings); // ADD THIS
+
     const configMap = settings.reduce((acc, curr) => {
       acc[curr.key] = curr.value;
       return acc;
