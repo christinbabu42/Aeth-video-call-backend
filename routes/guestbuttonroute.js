@@ -26,8 +26,6 @@ router.post("/", async (req, res) => {
     const guestUser = await User.create({
       name: `Guest_${Math.floor(1000 + Math.random() * 9000)}`,
       email: `guest_${Date.now()}@aethmeet.com`,
-      role: "guest",
-      isGuest: true
     });
 
     const token = jwt.sign({ id: guestUser._id }, process.env.JWT_SECRET, { expiresIn: "1d" });
