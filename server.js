@@ -77,7 +77,7 @@ app.use("/api/iap",require("./routes/GoogleBillingRouteiap.js"));
 app.use("/api/bank",require("./routes/bankRoutes.js"));
 app.use("/api/avatar", require("./routes/avatarRoute"));
 app.use("/api/admin/avatar", require("./routes/adminAvatarRoute"));
-app.use("/api/config", require("./routes/configRoutes.js"));
+app.use("/api/auth/guest", require("./routes/guestbuttonroute.js"));
 
 
 
