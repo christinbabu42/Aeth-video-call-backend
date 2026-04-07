@@ -5,7 +5,22 @@ const {
   RekognitionClient,
   DetectFacesCommand,
 } = require("@aws-sdk/client-rekognition");
+const GlobalConfig = require("../models/GlobalConfig"); // ✅ Added for Toggle Logic
 
+// --- GLOBAL CONFIG ROUTE (For App Review Toggle) ---
+
+// GET /api/aws/showGuestLogin
+router.get("/showGuestLogin", async (req, res) => {
+  try {
+    const config = await GlobalConfig.findOne({ key: "showGuestLogin" });
+    res.json({ value: config ? config.value : false });
+  } catch (err) {
+    console.error("Config Fetch Error:", err);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+// --- AWS REKOGNITION LOGIC (Your Original Code) ---
 
 // Correct code (Uppercase matches your .env)
 console.log("ACCESS:", process.env.AWS_Rekognition_ACCESS_KEY);
