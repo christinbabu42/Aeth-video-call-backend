@@ -5,6 +5,7 @@ const auth = require("../middlewares/auth");
 // ✅ ADD THIS LINE BELOW
 const Visitor = require("../models/Visitor");
 const BlockedUser = require("../models/Block");
+const GlobalConfig = require("../models/GlobalConfig"); // ✅ Added this
 const requireOnboarding = require("../middlewares/requireOnboarding");
 
 const router = express.Router();
@@ -197,35 +198,43 @@ router.put("/profile", auth, async (req, res) => {
 router.get("/online", auth, requireOnboarding, async (req, res) => {
   try {
     const currentUser = await User.findById(req.user.id);
-    let oppositeGender = currentUser.gender === "male" ? "female" : "male";
+    
+    // ✅ Check Review Mode Status
+    const config = await GlobalConfig.findOne({ key: "showGuestLogin" });
+    const isReviewMode = config ? config.value : false;
 
-    // ✅ 1️⃣ Get users current user blocked
+    // 1️⃣ Get users current user blocked
     const blockedByMe = await BlockedUser.find({
       blocker: currentUser._id,
     }).select("blocked");
-
     const blockedByMeIds = blockedByMe.map((b) => b.blocked);
 
-    // ✅ 2️⃣ Get users who blocked current user
+    // 2️⃣ Get users who blocked current user
     const blockedMe = await BlockedUser.find({
       blocked: currentUser._id,
     }).select("blocker");
-
     const blockedMeIds = blockedMe.map((b) => b.blocker);
 
-    // ✅ 3️⃣ Combine all excluded IDs
+    // 3️⃣ Combine all excluded IDs
     const excludedIds = [
       ...blockedByMeIds,
       ...blockedMeIds,
       currentUser._id,
     ];
 
-    // ✅ 4️⃣ Your original query + block exclusion added
-    const users = await User.find({
+    // 4️⃣ Build Query
+    let query = {
       status: { $in: ["online", "busy", "live"] },
-      gender: oppositeGender,
-      _id: { $nin: excludedIds }, // 🔥 Only change added
-    }).select("nickname profilePic nation status lastSeen publicId");
+      _id: { $nin: excludedIds }
+    };
+
+    // ✅ If NOT in review mode, apply the gender filter
+    if (!isReviewMode) {
+      query.gender = currentUser.gender === "male" ? "female" : "male";
+    }
+
+    const users = await User.find(query)
+      .select("nickname profilePic nation status lastSeen publicId gender");
 
     res.json({ success: true, users });
 
