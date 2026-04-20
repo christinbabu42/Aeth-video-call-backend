@@ -50,10 +50,21 @@ module.exports = async (req, res, next) => {
     req.user = user;
 
     next();
-  } catch (err) {
+  }catch (err) {
+  console.log("JWT ERROR:", err.message);
+
+  if (err.name === "TokenExpiredError") {
     return res.status(401).json({
       success: false,
-      message: "Invalid token",
+      message: "Token expired", // 🔥 IMPORTANT
+      forceLogout: true,
     });
   }
+
+  return res.status(401).json({
+    success: false,
+    message: "Invalid token",
+    forceLogout: true,
+  });
+}
 };
