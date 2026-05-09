@@ -59,7 +59,12 @@ console.log("ACCESS:", process.env.AWS_Rekognition_ACCESS_KEY);
 console.log("SECRET:", process.env.AWS_Rekognition_SECRET_ACCESS_KEY);
 
 // memory storage (no file save)
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB
+  },
+});
 
 // AWS client
 const client = new RekognitionClient({

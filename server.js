@@ -40,6 +40,10 @@ app.use(express.json());
 //multer media
 app.use('/public', express.static('public'));
 
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ limit: "10mb", extended: true }));
+
+
 // Routes
 app.use("/api/auth", googleAuthRoutes);
 app.use("/api/user", userRoutes);
