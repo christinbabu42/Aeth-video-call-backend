@@ -100,6 +100,27 @@ const initSocket = (server, extraOptions = {}) => {
       console.error("Online status error:", err);
     }
 
+    // ✅ MANUAL STATUS UPDATE
+    socket.on("update-status", async ({ status }) => {
+      try {
+        await User.findByIdAndUpdate(socket.userId, {
+          status,
+          lastSeen: status === "offline"
+            ? new Date()
+            : null,
+        });
+
+        io.emit("status-updated", {
+          userId: socket.userId,
+          status,
+        });
+
+        console.log(`📡 ${socket.userId} => ${status}`);
+      } catch (err) {
+        console.error("Status update error:", err);
+      }
+    });
+
     // =========================
     // 3. CHAT MESSAGING LOGIC
     // =========================
