@@ -3,6 +3,7 @@ const jwt = require("jsonwebtoken");
 const axios = require("axios"); 
 const { OAuth2Client } = require("google-auth-library");
 const User = require("../models/User");
+const RefreshToken = require("../models/RefreshToken");
 
 const router = express.Router();
 
@@ -137,20 +138,42 @@ router.post("/google", async (req, res) => {
       user.onboardingCompleted === true ||
       Boolean(user.nickname && user.gender && user.dateOfBirth);
 
-    // 🔐 Create JWT with Role
-    const token = jwt.sign(
-      { 
-        id: user._id, 
-        email: user.email, 
-        role: user.role 
+    const jwtAccessToken = jwt.sign(
+      {
+        id: user._id,
+        email: user.email,
+        role: user.role,
       },
       process.env.JWT_SECRET,
-      { expiresIn: "7d" }
+      {
+        expiresIn: "15m",
+      }
     );
+
+    const refreshToken = jwt.sign(
+      {
+        id: user._id,
+      },
+      process.env.JWT_REFRESH_SECRET,
+      {
+        expiresIn: "30d",
+      }
+    );
+
+    await RefreshToken.deleteMany({
+      user: user._id,
+    });
+
+    await RefreshToken.create({
+      user: user._id,
+      token: refreshToken,
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    });
 
     res.json({
       success: true,
-      token,
+      accessToken: jwtAccessToken,
+      refreshToken,
       user,
       isOnboarded,
       isAdmin: adminRoles.includes(user.role),
@@ -159,6 +182,73 @@ router.post("/google", async (req, res) => {
     console.error("Google Auth Error:", error.response?.data || error.message);
     res.status(401).json({ message: "Invalid Google token or session" });
   }
+});
+
+router.post("/refresh", async (req, res) => {
+
+    const { refreshToken } = req.body;
+
+    if (!refreshToken)
+        return res.sendStatus(401);
+
+    const saved = await RefreshToken.findOne({
+        token: refreshToken,
+    });
+
+    if (!saved || saved.expiresAt < new Date())
+        return res.sendStatus(403);
+
+    try {
+
+        const payload = jwt.verify(
+            refreshToken,
+            process.env.JWT_REFRESH_SECRET
+        );
+
+        const user = await User.findById(payload.id);
+
+        if (!user)
+            return res.sendStatus(403);
+
+        const accessToken = jwt.sign(
+            {
+                id: user._id,
+                email: user.email,
+                role: user.role,
+            },
+            process.env.JWT_SECRET,
+            {
+                expiresIn: "15m",
+            }
+        );
+
+        res.json({
+            accessToken,
+        });
+
+    } catch {
+
+        await RefreshToken.deleteOne({
+            token: refreshToken,
+        });
+
+        return res.sendStatus(403);
+    }
+
+});
+
+router.post("/logout", async (req,res)=>{
+
+    const {refreshToken}=req.body;
+
+    await RefreshToken.deleteOne({
+        token:refreshToken
+    });
+
+    res.json({
+        success:true
+    });
+
 });
 
 module.exports = router;
