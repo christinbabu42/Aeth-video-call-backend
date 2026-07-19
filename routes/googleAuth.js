@@ -47,10 +47,15 @@ router.post("/google", async (req, res) => {
 
     // ✅ HYBRID VERIFICATION LOGIC
     if (idToken) {
+      // Allow audience fallback matching if request originates from Web Admin dashboard
+      const targetAudience = isAdminLogin 
+        ? ["647678003424-sct1je6u5s8fq497hcd96ercqjmtr5f3.apps.googleusercontent.com", process.env.GOOGLE_WEB_CLIENT_ID]
+        : process.env.GOOGLE_WEB_CLIENT_ID;
+
       // Logic for standard JWT ID Tokens
       const ticket = await client.verifyIdToken({
         idToken,
-        audience: process.env.GOOGLE_WEB_CLIENT_ID,
+        audience: targetAudience,
       });
       payload = ticket.getPayload();
     } else if (accessToken) {
@@ -185,76 +190,75 @@ router.post("/google", async (req, res) => {
       isAdmin: adminRoles.includes(user.role),
     });
   } catch (error) {
-    console.error("Google Auth Error:", error.response?.data || error.message);
-    res.status(401).json({ message: "Invalid Google token or session" });
+    // 🔥 NEW TRANSPARENT ERROR LOGGER
+    console.error("========== ERROR ==========");
+    console.error(error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+      stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
+    });
   }
 });
 
 router.post("/refresh", async (req, res) => {
+  const { refreshToken } = req.body;
 
-    const { refreshToken } = req.body;
+  if (!refreshToken)
+      return res.sendStatus(401);
 
-    if (!refreshToken)
-        return res.sendStatus(401);
+  const saved = await RefreshToken.findOne({
+      token: refreshToken,
+  });
 
-    const saved = await RefreshToken.findOne({
-        token: refreshToken,
-    });
+  if (!saved || saved.expiresAt < new Date())
+      return res.sendStatus(403);
 
-    if (!saved || saved.expiresAt < new Date())
-        return res.sendStatus(403);
+  try {
+      const payload = jwt.verify(
+          refreshToken,
+          process.env.JWT_REFRESH_SECRET
+      );
 
-    try {
+      const user = await User.findById(payload.id);
 
-        const payload = jwt.verify(
-            refreshToken,
-            process.env.JWT_REFRESH_SECRET
-        );
+      if (!user)
+          return res.sendStatus(403);
 
-        const user = await User.findById(payload.id);
+      const accessToken = jwt.sign(
+          {
+              id: user._id,
+              email: user.email,
+              role: user.role,
+          },
+          process.env.JWT_SECRET,
+          {
+              expiresIn: "15m",
+          }
+      );
 
-        if (!user)
-            return res.sendStatus(403);
-
-        const accessToken = jwt.sign(
-            {
-                id: user._id,
-                email: user.email,
-                role: user.role,
-            },
-            process.env.JWT_SECRET,
-            {
-                expiresIn: "15m",
-            }
-        );
-
-        res.json({
-            accessToken,
-        });
-
-    } catch {
-
-        await RefreshToken.deleteOne({
-            token: refreshToken,
-        });
-
-        return res.sendStatus(403);
-    }
-
+      res.json({
+          accessToken,
+      });
+  } catch {
+      await RefreshToken.deleteOne({
+          token: refreshToken,
+      });
+      return res.sendStatus(403);
+  }
 });
 
-router.post("/logout", async (req,res)=>{
+router.post("/logout", async (req, res) => {
+  const { refreshToken } = req.body;
 
-    const {refreshToken}=req.body;
+  await RefreshToken.deleteOne({
+      token: refreshToken
+  });
 
-    await RefreshToken.deleteOne({
-        token:refreshToken
-    });
-
-    res.json({
-        success:true
-    });
-
+  res.json({
+      success: true
+  });
 });
 
 module.exports = router;
