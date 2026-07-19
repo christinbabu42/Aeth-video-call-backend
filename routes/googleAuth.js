@@ -35,7 +35,7 @@ router.post("/google", async (req, res) => {
   try {
     const { idToken, accessToken, isAdminLogin } = req.body;
 
-        // ✅ ADD DEBUG LOGS HERE
+    // ✅ ADD DEBUG LOGS HERE
     console.log("ENV CLIENT ID:", process.env.GOOGLE_WEB_CLIENT_ID);
     console.log("FRONTEND TOKEN RECEIVED:", idToken ? "YES" : "NO");
 
@@ -169,6 +169,12 @@ router.post("/google", async (req, res) => {
       token: refreshToken,
       expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
     });
+
+    // 🔍 SERVER-SIDE OUTBOUND PAYLOAD LOGGING
+    console.log("--- OUTBOUND RESPONSE DEBUG ---");
+    console.log("accessToken Type:", typeof jwtAccessToken);
+    console.log("refreshToken Type:", typeof refreshToken);
+    console.log("---------------------------------");
 
     res.json({
       success: true,
