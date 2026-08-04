@@ -12,6 +12,16 @@ const liveStreamSchema = new mongoose.Schema({
     default: 'streaming' 
   },
 
+    totalCoinsEarned: {
+    type: Number,
+    default: 0
+  },
+
+  rewardMinutes: {
+    type: Number,
+    default: 0
+  },
+
   // Live Metrics
   currentViewers: { type: Number, default: 0 },
   maxConcurrentViewers: { type: Number, default: 0 },

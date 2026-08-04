@@ -7,6 +7,9 @@ const LiveStream = require("../models/LiveStream");
 const LiveStreamViewer = require("../models/LiveStreamViewer");
 const BlockedUser = require("../models/Block");
 
+// ✅ Import timer utilities
+const { startRewardTimer, stopRewardTimer } = require("../utils/liveRewardTimer");
+
 const router = express.Router();
 
 // =========================
@@ -78,6 +81,9 @@ router.get("/token", auth, async (req, res) => {
         status: "streaming",
         startedAt: new Date(),
       });
+
+      // 🪙 START REWARD TIMER FOR HOST
+      startRewardTimer(newStream._id, req.user.id);
 
       // 3️⃣ Get Socket Instance (ONLY ONCE)
       const io = getIO(); 
@@ -247,14 +253,20 @@ router.delete("/end-room/:roomName", async (req, res) => {
         BigScreen: false, 
       });
 
-      await LiveStream.findOneAndUpdate(
+      const stream = await LiveStream.findOneAndUpdate(
         { hostId, status: "streaming" },
         {
           status: "ended",
           endedAt: new Date(),
           currentViewers: 0 // Reset viewers on end
-        }
+        },
+        { new: true }
       );
+
+      // 🛑 STOP REWARD TIMER WHEN STREAM ENDS
+      if (stream) {
+        stopRewardTimer(stream._id);
+      }
 
       const io = getIO();
 
