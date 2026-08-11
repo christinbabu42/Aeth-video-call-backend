@@ -12,12 +12,22 @@ exports.getIncome = async (req, res) => {
 
     let income = await Income.findOne({ userId });
 
-    // create if not exists
+    // Create record with defaults if it does not exist yet
     if (!income) {
       income = await Income.create({
         userId,
-        totalEarnings: 0,
-        history: []
+        availableCoins: 0,
+        totalCoins: 0,
+        totalRupees: 0,
+        liveCoins: 0,
+        giftCoins: 0,
+        callCoins: 0,
+        withdrawnCoins: 0,
+        pendingWithdrawalCoins: 0,
+        liveMinutes: 0,
+        totalCalls: 0,
+        totalGifts: 0,
+        withdrawalHistory: []
       });
     }
 
@@ -29,32 +39,53 @@ exports.getIncome = async (req, res) => {
     const minWithdrawal = rateConfig?.minimumWithdrawalAmount || 500;
     const hostRate = rateConfig?.hostCoinValue || 0.45;
 
-    // 🔥 calculate breakdown
+    // 🔥 Direct breakdown lookup from stored fields (O(1) constant time)
     const breakdown = {
-      call: 0,
-      gift: 0,
-      live: 0
+      call: income.callCoins || 0,
+      gift: income.giftCoins || 0,
+      live: income.liveCoins || 0
     };
 
-    income.history.forEach(item => {
-      if (item.type === "call") breakdown.call += item.amount;
-      if (item.type === "gift") breakdown.gift += item.amount;
-      if (item.type === "live") breakdown.live += item.amount;
-    });
-
-    const sortedHistory = income.history.sort((a, b) => b.createdAt - a.createdAt);
+    // Sort withdrawal history from newest to oldest
+    const historyList = income.withdrawalHistory || income.history || [];
+    const sortedHistory = [...historyList].sort(
+      (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+    );
 
     res.status(200).json({
       success: true,
-      totalEarnings: income.totalEarnings,
+
+      // Balances
+      totalEarnings: income.availableCoins ?? income.totalEarnings ?? 0,
+      totalCoins: income.totalCoins || 0,
+      totalRupees: income.totalRupees || 0,
+      availableCoins: income.availableCoins || 0,
+      withdrawnCoins: income.withdrawnCoins || 0,
+      pendingWithdrawalCoins: income.pendingWithdrawalCoins || 0,
+
+      // Breakdown
       breakdown,
+      liveCoins: income.liveCoins || 0,
+      giftCoins: income.giftCoins || 0,
+      callCoins: income.callCoins || 0,
+
+      // Statistics
+      liveMinutes: income.liveMinutes || 0,
+      totalCalls: income.totalCalls || 0,
+      totalGifts: income.totalGifts || 0,
+
+      // Config & User Metadata
       bankAdded: user?.bankAdded || false,
-      minWithdrawal, // ✅ dynamic limit sent to frontend
+      minWithdrawal,
+      hostRate,
+
+      // Withdrawal History (Mapped with production fallback)
       history: sortedHistory.map(item => ({
-        ...item._doc,
-        // ✅ PRODUCTION FALLBACK SYSTEM
-        // 1. Use stored rupees if available (stored at time of transaction)
-        // 2. Otherwise calculate dynamically: amount (hostCoins) * hostRate
+        ...(item._doc || item),
+        rupees: item.rupees || (item.amount * hostRate)
+      })),
+      withdrawalHistory: sortedHistory.map(item => ({
+        ...(item._doc || item),
         rupees: item.rupees || (item.amount * hostRate)
       }))
     });
@@ -92,23 +123,33 @@ exports.withdraw = async (req, res) => {
       });
     }
 
-    // ✅ STEP 2: Check if user has enough balance
-    if (income.totalEarnings < amount) {
+    // ✅ STEP 2: Check if user has enough available balance
+    const currentAvailable = income.availableCoins ?? income.totalEarnings ?? 0;
+    if (currentAvailable < amount) {
       return res.status(400).json({ message: "Insufficient balance" });
     }
 
-    // Logic to deduct and add to history
-    income.totalEarnings -= amount;
-    
-    // Safety: ensure lockedEarnings field exists if you use it for "Processing" status
+    // Deduct from available balance & move to pending withdrawal coins
+    income.availableCoins = currentAvailable - amount;
+    income.pendingWithdrawalCoins = (income.pendingWithdrawalCoins || 0) + amount;
+
+    // Legacy sync
+    if (income.totalEarnings !== undefined) {
+      income.totalEarnings = income.availableCoins;
+    }
     if (income.lockedEarnings !== undefined) {
-      income.lockedEarnings += amount;
+      income.lockedEarnings = (income.lockedEarnings || 0) + amount;
     }
 
     // ✅ Calculation for record (Total ₹ to be paid to host)
     const withdrawalRupees = amount * hostRate;
 
-    income.history.push({
+    // Ensure array initialization
+    if (!income.withdrawalHistory) {
+      income.withdrawalHistory = [];
+    }
+
+    income.withdrawalHistory.push({
       type: "withdrawal",
       amount: amount,
       rupees: withdrawalRupees, // ✅ Store rupees for withdrawal auditing
@@ -122,7 +163,7 @@ exports.withdraw = async (req, res) => {
     res.status(200).json({ 
       success: true, 
       message: "Withdrawal request submitted successfully",
-      newBalance: income.totalEarnings 
+      newBalance: income.availableCoins 
     });
 
   } catch (error) {
