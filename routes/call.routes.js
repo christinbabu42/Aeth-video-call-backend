@@ -94,47 +94,71 @@ const endCallAndCreditIncome = async (callId, io) => {
     let payingUserId = caller.gender === "male" ? caller._id : host._id;
     let earningUserId = caller.gender === "female" ? caller._id : host._id;
 
-    // 4. Process Earnings for Female User
+    // 4. CREDIT CALL EARNINGS
     if (earningUserId && call.hostEarnings > 0) {
-      let income = await Income.findOne({ userId: earningUserId });
-      if (!income) {
-        income = new Income({ userId: earningUserId, totalEarnings: 0, history: [] });
-      }
 
-      // Prevent duplicate income entry for the same call
-      const alreadyExists = income.history.some(
-        h => h.description === `Call Earnings - ${call._id}`
+      // Atomic income update
+      const income = await Income.findOneAndUpdate(
+        { userId: earningUserId },
+        {
+          $inc: {
+            // Call-specific earnings
+            callCoins: call.hostEarnings,
+
+            // Overall earnings
+            totalCoins: call.hostEarnings,
+
+            // Available for withdrawal
+            availableCoins: call.hostEarnings,
+
+            // Rupee equivalent
+            totalRupees: call.hostEarningsInRupees,
+
+            // Number of completed calls
+            totalCalls: 1
+          }
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true
+        }
       );
 
-      if (!alreadyExists) {
-        // Use precision to update totalEarnings
-        income.totalEarnings = Number((income.totalEarnings + call.hostEarnings).toFixed(2));
-income.history.push({
-  amount: call.hostEarnings,
-  rupees: call.hostEarningsInRupees, // ✅ ADD THIS
-  description: `Call Earnings - ${call._id}`,
-  type: "call",
-  status: "completed",
-  createdAt: new Date()
-});
-        await income.save();
-      }
+      console.log("☎️ CALL INCOME CREDITED:", {
+        userId: earningUserId.toString(),
+        callCoins: call.hostEarnings,
+        totalCoins: income.totalCoins,
+        availableCoins: income.availableCoins,
+        totalRupees: income.totalRupees
+      });
 
-      // Update Payer (Male) Wallet UI
+      // Update payer wallet UI
       if (payingUserId) {
-        const payerWallet = await Wallet.findOne({ userId: payingUserId });
+        const payerWallet = await Wallet.findOne({
+          userId: payingUserId
+        });
+
         if (payerWallet) {
-          io.to(String(payingUserId)).emit("walletUpdated", { coins: payerWallet.coins });
+          io.to(String(payingUserId)).emit("walletUpdated", {
+            coins: payerWallet.coins
+          });
         }
       }
 
-      // Update Earner (Female) Income UI
-io.to(String(earningUserId)).emit("incomeUpdated", { 
-  totalEarnings: income.totalEarnings,
-  lastEarningCoins: call.hostEarnings,
-  lastEarningRupees: call.hostEarningsInRupees,
-  hostCoinValue: HOST_COIN_VALUE   // optional
-});
+      // Update earner income UI
+      io.to(String(earningUserId)).emit("incomeUpdated", {
+        callCoins: income.callCoins,
+        totalCoins: income.totalCoins,
+        availableCoins: income.availableCoins,
+        totalRupees: income.totalRupees,
+        totalCalls: income.totalCalls,
+
+        lastEarningCoins: call.hostEarnings,
+        lastEarningRupees: call.hostEarningsInRupees,
+
+        hostCoinValue: HOST_COIN_VALUE
+      });
     }
 
     // 5. Force Call Termination on Client Side

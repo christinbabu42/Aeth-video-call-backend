@@ -95,6 +95,7 @@ router.post("/buy-and-inventory", auth, async (req, res) => {
   try {
     const rateConfig = await getRateCoinConfig();
     const userCoinValue = Number(rateConfig.userCoinValue);
+    const hostCoinValue = Number(rateConfig.hostCoinValue);
 
     const gift = await Gift.findById(giftId);
     if (!gift) return res.status(404).json({ success: false, message: "Gift not found" });
@@ -147,13 +148,19 @@ router.post("/buy-and-inventory", auth, async (req, res) => {
         { upsert: true }
       );
 
+      // ✅ ATOMIC AGGREGATE UPDATE FOR RECEIVER INCOME (NO totalEarnings)
       await Income.findOneAndUpdate(
         { userId: receiverId },
         { 
-          $inc: { totalEarnings: hostCoins },
-          $push: { history: { amount: hostCoins, type: 'gift', description: `Gift: ${gift.name}`, createdAt: new Date() } }
+          $inc: { 
+            availableCoins: hostCoins,
+            giftCoins: hostCoins,
+            totalCoins: hostCoins,
+            totalGifts: 1,
+            totalRupees: +(hostCoins * hostCoinValue).toFixed(2),
+          }
         },
-        { upsert: true }
+        { upsert: true, new: true, setDefaultsOnInsert: true }
       );
 
       await GiftTransaction.create({
@@ -198,7 +205,18 @@ router.post("/buy-and-inventory", auth, async (req, res) => {
       const receiverIncome = await Income.findOne({ userId: receiverId });
       if (receiverIncome) {
         io.to(String(receiverId)).emit("incomeUpdated", {
-          totalEarnings: receiverIncome.totalEarnings
+          liveCoins: receiverIncome.liveCoins,
+          giftCoins: receiverIncome.giftCoins,
+          callCoins: receiverIncome.callCoins,
+
+          totalCoins: receiverIncome.totalCoins,
+          totalRupees: receiverIncome.totalRupees,
+
+          availableCoins: receiverIncome.availableCoins,
+
+          liveMinutes: receiverIncome.liveMinutes,
+          totalCalls: receiverIncome.totalCalls,
+          totalGifts: receiverIncome.totalGifts,
         });
       }
     }
@@ -216,6 +234,7 @@ router.post("/send", auth, async (req, res) => {
     const { giftId, receiverId } = req.body;
     const rateConfig = await getRateCoinConfig();
     const userCoinValue = Number(rateConfig.userCoinValue);
+    const hostCoinValue = Number(rateConfig.hostCoinValue);
 
     if (isNaN(userCoinValue)) throw new Error("Invalid userCoinValue");
 
@@ -260,20 +279,19 @@ router.post("/send", auth, async (req, res) => {
       const platformCommissionCoins = Number((giftCoins * rateConfig.giftCommissionRate).toFixed(2));
       const hostCoins = Number((giftCoins - platformCommissionCoins).toFixed(2));
 
+      // ✅ ATOMIC AGGREGATE UPDATE FOR RECEIVER INCOME (NO totalEarnings)
       await Income.findOneAndUpdate(
         { userId: receiverId },
         { 
-          $inc: { totalEarnings: hostCoins },
-          $push: { 
-            history: { 
-              amount: hostCoins, 
-              type: 'gift', 
-              description: `Gift received: ${gift.name}`,
-              createdAt: new Date()
-            } 
+          $inc: { 
+            availableCoins: hostCoins,
+            giftCoins: hostCoins,
+            totalCoins: hostCoins,
+            totalGifts: 1,
+            totalRupees: +(hostCoins * hostCoinValue).toFixed(2),
           }
         },
-        { upsert: true }
+        { upsert: true, new: true, setDefaultsOnInsert: true }
       );
 
       // Save Platform Commission (Metadata using host rate for reference)
@@ -282,7 +300,7 @@ router.post("/send", auth, async (req, res) => {
         type: "CREDIT",
         category: "GIFT_PURCHASE", 
         coins: platformCommissionCoins,
-        amount: +(platformCommissionCoins * rateConfig.hostCoinValue).toFixed(2),
+        amount: +(platformCommissionCoins * hostCoinValue).toFixed(2),
         status: "SUCCESS",
         comment: "Platform Commission" 
       });
@@ -331,7 +349,18 @@ router.post("/send", auth, async (req, res) => {
       const receiverIncome = await Income.findOne({ userId: receiverId });
       if (receiverIncome) {
         io.to(String(receiverId)).emit("incomeUpdated", {
-          totalEarnings: receiverIncome.totalEarnings
+          liveCoins: receiverIncome.liveCoins,
+          giftCoins: receiverIncome.giftCoins,
+          callCoins: receiverIncome.callCoins,
+
+          totalCoins: receiverIncome.totalCoins,
+          totalRupees: receiverIncome.totalRupees,
+
+          availableCoins: receiverIncome.availableCoins,
+
+          liveMinutes: receiverIncome.liveMinutes,
+          totalCalls: receiverIncome.totalCalls,
+          totalGifts: receiverIncome.totalGifts,
         });
       }
     }
