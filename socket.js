@@ -5,9 +5,53 @@ const Call = require("./models/Call");
 const BlockedUser = require("./models/Block"); // adjust path if needed
 const jwt = require("jsonwebtoken");
 
-// Global timer map for reconnection grace periods
+// Global timer map for reconnection grace periods (keyed by String(userId))
 const disconnectTimers = new Map();
 let ioInstance = null; // Ensuring instance is tracked
+
+/**
+ * ✅ HELPER: Check if a user has at least one active Socket.IO connection
+ */
+const hasActiveSocket = (userId) => {
+  if (!ioInstance) return false;
+  const userIdStr = String(userId);
+  const room = ioInstance.sockets.adapter.rooms.get(userIdStr);
+  return Boolean(room && room.size > 0);
+};
+
+/**
+ * ✅ HELPER: Restore user presence safely based on actual socket connectivity
+ */
+const restoreOnlineIfConnected = async (userId) => {
+  if (!userId || !ioInstance) return;
+  const userIdStr = String(userId);
+
+  if (hasActiveSocket(userIdStr)) {
+    await User.findByIdAndUpdate(userIdStr, {
+      status: "online",
+      lastSeen: null,
+    });
+
+    ioInstance.emit("status-updated", {
+      userId: userIdStr,
+      status: "online",
+    });
+
+    console.log(`🟢 ${userIdStr} → ONLINE (active socket found)`);
+  } else {
+    await User.findByIdAndUpdate(userIdStr, {
+      status: "offline",
+      lastSeen: new Date(),
+    });
+
+    ioInstance.emit("status-updated", {
+      userId: userIdStr,
+      status: "offline",
+    });
+
+    console.log(`🔴 ${userIdStr} → OFFLINE (no active sockets)`);
+  }
+};
 
 /**
  * ✅ Structure updated for JWT-based Auth and Auto-Joining
@@ -17,7 +61,7 @@ const initSocket = (server, extraOptions = {}) => {
     cors: { origin: "*" },
     pingTimeout: 60000,
     pingInterval: 25000,
-    ...extraOptions 
+    ...extraOptions,
   });
 
   ioInstance = io;
@@ -33,9 +77,9 @@ const initSocket = (server, extraOptions = {}) => {
       }
 
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      
+
       // ✅ Map decoded ID to socket.userId
-      socket.userId = decoded.id || decoded._id; 
+      socket.userId = decoded.id || decoded._id;
 
       if (!socket.userId) {
         return next(new Error("Invalid token payload"));
@@ -78,36 +122,45 @@ const initSocket = (server, extraOptions = {}) => {
       console.log(`👨 ${userIdStr} joined male-users`);
     }
 
-    // ✅ SET USER ONLINE IMMEDIATELY
+    // ✅ CLEAR PENDING DISCONNECT TIMER IF USER RECONNECTED FAST
+    if (disconnectTimers.has(userIdStr)) {
+      clearTimeout(disconnectTimers.get(userIdStr));
+      disconnectTimers.delete(userIdStr);
+      console.log(`♻️ Reconnection detected for ${userIdStr}, timer cleared.`);
+    }
+
+    // ✅ SET USER ONLINE IMMEDIATELY ON NEW CONNECTION
     try {
-      await User.findByIdAndUpdate(socket.userId, { 
-        status: "online", 
-        lastSeen: null 
+      await User.findByIdAndUpdate(socket.userId, {
+        status: "online",
+        lastSeen: null,
       });
 
       io.emit("status-updated", {
         userId: socket.userId,
         status: "online",
       });
-
-      // Clear any pending disconnect timers if user reconnected fast
-      if (disconnectTimers.has(socket.userId)) {
-        clearTimeout(disconnectTimers.get(socket.userId));
-        disconnectTimers.delete(socket.userId);
-        console.log(`♻️ Reconnection detected for ${userIdStr}, timer cleared.`);
-      }
     } catch (err) {
       console.error("Online status error:", err);
     }
+
+    // ✅ HEARTBEAT EVENT (Keeps lastSeen updated while connected)
+    socket.on("presence-heartbeat", async () => {
+      try {
+        await User.findByIdAndUpdate(socket.userId, {
+          lastSeen: null,
+        });
+      } catch (err) {
+        console.error("Heartbeat error:", err);
+      }
+    });
 
     // ✅ MANUAL STATUS UPDATE
     socket.on("update-status", async ({ status }) => {
       try {
         await User.findByIdAndUpdate(socket.userId, {
           status,
-          lastSeen: status === "offline"
-            ? new Date()
-            : null,
+          lastSeen: status === "offline" ? new Date() : null,
         });
 
         io.emit("status-updated", {
@@ -132,14 +185,14 @@ const initSocket = (server, extraOptions = {}) => {
         const isBlocked = await BlockedUser.findOne({
           $or: [
             { blocker: senderId, blocked: receiverId },
-            { blocker: receiverId, blocked: senderId }
-          ]
+            { blocker: receiverId, blocked: senderId },
+          ],
         });
 
         if (isBlocked) {
           // silently reject OR notify sender
           io.to(String(senderId)).emit("message-blocked", {
-            message: "User not available"
+            message: "User not available",
           });
           return;
         }
@@ -148,7 +201,7 @@ const initSocket = (server, extraOptions = {}) => {
           senderId,
           receiverId,
           type,
-          isRead: false
+          isRead: false,
         };
 
         if (type === "text") messageData.text = data.text;
@@ -175,13 +228,12 @@ const initSocket = (server, extraOptions = {}) => {
 
         const unreadCount = await Message.countDocuments({
           receiverId,
-          isRead: false
+          isRead: false,
         });
 
         io.to(String(receiverId)).emit("unread-count-updated", {
-          count: unreadCount
+          count: unreadCount,
         });
-
       } catch (err) {
         console.error("Message save error:", err);
       }
@@ -196,7 +248,7 @@ const initSocket = (server, extraOptions = {}) => {
           senderId: socket.userId,
           receiverId: to,
           type: "gift",
-          gift: gift._id
+          gift: gift._id,
         });
 
         const populated = await message.populate("gift");
@@ -211,7 +263,7 @@ const initSocket = (server, extraOptions = {}) => {
     // =========================
     // 5. WEBRTC SIGNALING (CALLS)
     // =========================
-    
+
     // OFFER
     socket.on("call-offer", ({ to, offer, callId, name }) => {
       const targetRoom = String(to);
@@ -223,10 +275,10 @@ const initSocket = (server, extraOptions = {}) => {
       } else {
         console.log(`📞 Offer from ${socket.userId} to ${targetRoom}`);
         io.to(targetRoom).emit("call-offer", {
-          from: socket.userId, 
+          from: socket.userId,
           offer,
           callId,
-          name: name
+          name: name,
         });
       }
     });
@@ -246,7 +298,7 @@ const initSocket = (server, extraOptions = {}) => {
 
       io.to(targetRoom).emit("call-answer", {
         from: socket.userId,
-        answer
+        answer,
       });
     });
 
@@ -255,7 +307,7 @@ const initSocket = (server, extraOptions = {}) => {
       const targetRoom = String(to);
       io.to(targetRoom).emit("ice-candidate", {
         from: socket.userId,
-        candidate
+        candidate,
       });
     });
 
@@ -285,16 +337,13 @@ const initSocket = (server, extraOptions = {}) => {
         }
 
         console.log(`📤 Broadcasting call-end: ${callId}`);
-        
+
         io.to(callerIdStr).emit("call-end", { callId });
         io.to(hostIdStr).emit("call-end", { callId });
 
-        await User.findByIdAndUpdate(callerIdStr, { status: "online" });
-        await User.findByIdAndUpdate(hostIdStr, { status: "online" });
-
-        io.emit("status-updated", { userId: callerIdStr, status: "online" });
-        io.emit("status-updated", { userId: hostIdStr, status: "online" });
-
+        // ✅ SAFE PRESENCE RESTORE (Checks active sockets instead of blind online)
+        await restoreOnlineIfConnected(callerIdStr);
+        await restoreOnlineIfConnected(hostIdStr);
       } catch (error) {
         console.error("❌ Error in socket call-end:", error.message);
       }
@@ -317,52 +366,71 @@ const initSocket = (server, extraOptions = {}) => {
     // 7. DISCONNECT LOGIC
     // =========================
     socket.on("disconnect", async (reason) => {
-      console.log(`📡 Socket ${socket.id} disconnected. Reason: ${reason}`);
+      const userIdStr = String(socket.userId);
+      console.log(`📡 Socket ${socket.id} disconnected. User=${userIdStr}, Reason: ${reason}`);
 
       if (!socket.userId) return;
 
-      // Mark offline in DB
-      await User.findByIdAndUpdate(socket.userId, {
-        status: "offline",
-        lastSeen: new Date(),
-      });
+      // Clear existing disconnect timer for this user if active
+      if (disconnectTimers.has(userIdStr)) {
+        clearTimeout(disconnectTimers.get(userIdStr));
+        disconnectTimers.delete(userIdStr);
+      }
 
-      io.emit("status-updated", {
-        userId: socket.userId,
-        status: "offline",
-      });
-
-      // 🔒 Grace period (10 seconds)
+      // 🔒 Grace period (10 seconds) before setting offline and cleaning calls
       const timer = setTimeout(async () => {
-        console.log(`⏱ Grace expired for ${socket.userId}`);
+        try {
+          console.log(`⏱ Grace expired for ${userIdStr}`);
 
-        const activeCalls = await Call.find({
-          status: "ongoing",
-          $or: [
-            { callerId: socket.userId },
-            { hostId: socket.userId }
-          ]
-        });
+          // 🔥 Check if user still has another active socket connection
+          if (hasActiveSocket(userIdStr)) {
+            console.log(`♻️ ${userIdStr} has another active socket connection. Keeping ONLINE.`);
+            disconnectTimers.delete(userIdStr);
+            return;
+          }
 
-        for (const call of activeCalls) {
-          call.status = "completed";
-          call.endedAt = new Date();
-          await call.save();
+          // User has no remaining sockets -> mark OFFLINE
+          console.log(`🔴 ${userIdStr} is truly OFFLINE`);
 
-          io.to(String(call.callerId)).emit("call-end", { callId: call._id });
-          io.to(String(call.hostId)).emit("call-end", { callId: call._id });
+          await User.findByIdAndUpdate(userIdStr, {
+            status: "offline",
+            lastSeen: new Date(),
+          });
 
-          await User.findByIdAndUpdate(call.callerId, { status: "online" });
-          await User.findByIdAndUpdate(call.hostId, { status: "online" });
-          
-          io.emit("status-updated", { userId: call.callerId, status: "online" });
-          io.emit("status-updated", { userId: call.hostId, status: "online" });
+          io.emit("status-updated", {
+            userId: userIdStr,
+            status: "offline",
+          });
+
+          // Clean up any ongoing calls tied to this user
+          const activeCalls = await Call.find({
+            status: "ongoing",
+            $or: [
+              { callerId: socket.userId },
+              { hostId: socket.userId },
+            ],
+          });
+
+          for (const call of activeCalls) {
+            call.status = "completed";
+            call.endedAt = new Date();
+            await call.save();
+
+            io.to(String(call.callerId)).emit("call-end", { callId: call._id });
+            io.to(String(call.hostId)).emit("call-end", { callId: call._id });
+
+            // ✅ SAFE RESTORE FOR CALL PARTICIPANTS
+            await restoreOnlineIfConnected(call.callerId);
+            await restoreOnlineIfConnected(call.hostId);
+          }
+
+          disconnectTimers.delete(userIdStr);
+        } catch (err) {
+          console.error("❌ Disconnect cleanup error:", err);
         }
-        
-        disconnectTimers.delete(socket.userId);
-      }, 10000); 
+      }, 10000);
 
-      disconnectTimers.set(socket.userId, timer);
+      disconnectTimers.set(userIdStr, timer);
     });
   });
 
