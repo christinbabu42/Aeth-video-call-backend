@@ -115,6 +115,8 @@ deletedAt: {
 
       lastSeen: {
         type: Date,
+        default: null,
+        index: true,
       },
       
     

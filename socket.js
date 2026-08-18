@@ -8,6 +8,7 @@ const jwt = require("jsonwebtoken");
 // Global timer map for reconnection grace periods (keyed by String(userId))
 const disconnectTimers = new Map();
 let ioInstance = null; // Ensuring instance is tracked
+let cleanupIntervalId = null; // Background cleanup interval reference
 
 /**
  * ✅ HELPER: Check if a user has at least one active Socket.IO connection
@@ -29,7 +30,7 @@ const restoreOnlineIfConnected = async (userId) => {
   if (hasActiveSocket(userIdStr)) {
     await User.findByIdAndUpdate(userIdStr, {
       status: "online",
-      lastSeen: null,
+      lastSeen: new Date(),
     });
 
     ioInstance.emit("status-updated", {
@@ -54,7 +55,7 @@ const restoreOnlineIfConnected = async (userId) => {
 };
 
 /**
- * ✅ Structure updated for JWT-based Auth and Auto-Joining
+ * ✅ Structure updated for JWT-based Auth, Auto-Joining & Server-Authoritative Cleanup
  */
 const initSocket = (server, extraOptions = {}) => {
   const io = new Server(server, {
@@ -65,6 +66,49 @@ const initSocket = (server, extraOptions = {}) => {
   });
 
   ioInstance = io;
+
+  // =========================
+  // SERVER-AUTHORITATIVE CLEANUP JOB (Runs every 30 seconds)
+  // =========================
+  if (cleanupIntervalId) {
+    clearInterval(cleanupIntervalId);
+  }
+
+  cleanupIntervalId = setInterval(async () => {
+    try {
+      if (!ioInstance) return;
+      const cutoff = new Date(Date.now() - 90000); // 90 seconds cutoff window
+
+      const staleUsers = await User.find({
+        status: { $in: ["online", "busy", "live"] },
+        $or: [
+          { lastSeen: { $lt: cutoff } },
+          { lastSeen: null }
+        ]
+      }).select("_id status");
+
+      for (const user of staleUsers) {
+        const room = ioInstance.sockets.adapter.rooms.get(String(user._id));
+        const hasSocket = Boolean(room && room.size > 0);
+
+        if (!hasSocket) {
+          await User.findByIdAndUpdate(user._id, {
+            status: "offline",
+            lastSeen: new Date()
+          });
+
+          ioInstance.emit("status-updated", {
+            userId: String(user._id),
+            status: "offline"
+          });
+
+          console.log(`🧹 Presence cleanup: ${user._id} → OFFLINE`);
+        }
+      }
+    } catch (err) {
+      console.error("Presence cleanup error:", err);
+    }
+  }, 30000);
 
   // =========================
   // 1. JWT MIDDLEWARE
@@ -98,7 +142,7 @@ const initSocket = (server, extraOptions = {}) => {
     const userIdStr = String(socket.userId);
     console.log(`🔌 New Connection: ${socket.id} (User: ${userIdStr})`);
 
-    // ✅ FETCH USER FIRST (🔥 FIX)
+    // ✅ FETCH USER FIRST
     const user = await User.findById(socket.userId);
 
     // 🚫 BLOCK IF DELETED OR BANNED
@@ -111,7 +155,7 @@ const initSocket = (server, extraOptions = {}) => {
     // ✅ AUTOMATIC ROOM JOINING
     socket.join(userIdStr);
 
-    // 🔥 ADDED: GENDER ROOM JOIN (Logic strictly based on user model)
+    // GENDER ROOM JOIN
     if (user?.gender === "female") {
       socket.join("female-users");
       console.log(`👩 ${userIdStr} joined female-users`);
@@ -129,11 +173,11 @@ const initSocket = (server, extraOptions = {}) => {
       console.log(`♻️ Reconnection detected for ${userIdStr}, timer cleared.`);
     }
 
-    // ✅ SET USER ONLINE IMMEDIATELY ON NEW CONNECTION
+    // ✅ SET USER ONLINE IMMEDIATELY ON NEW CONNECTION WITH TIMESTAMP
     try {
       await User.findByIdAndUpdate(socket.userId, {
         status: "online",
-        lastSeen: null,
+        lastSeen: new Date(),
       });
 
       io.emit("status-updated", {
@@ -144,11 +188,11 @@ const initSocket = (server, extraOptions = {}) => {
       console.error("Online status error:", err);
     }
 
-    // ✅ HEARTBEAT EVENT (Keeps lastSeen updated while connected)
+    // ✅ HEARTBEAT EVENT (Updates lastSeen with current timestamp)
     socket.on("presence-heartbeat", async () => {
       try {
         await User.findByIdAndUpdate(socket.userId, {
-          lastSeen: null,
+          lastSeen: new Date(),
         });
       } catch (err) {
         console.error("Heartbeat error:", err);
@@ -160,7 +204,7 @@ const initSocket = (server, extraOptions = {}) => {
       try {
         await User.findByIdAndUpdate(socket.userId, {
           status,
-          lastSeen: status === "offline" ? new Date() : null,
+          lastSeen: new Date(),
         });
 
         io.emit("status-updated", {
@@ -288,9 +332,9 @@ const initSocket = (server, extraOptions = {}) => {
       const targetRoom = String(to);
       console.log(`✅ Call Answer from ${socket.userId} to ${targetRoom}`);
 
-      // ✅ SET BOTH USERS BUSY
-      await User.findByIdAndUpdate(socket.userId, { status: "busy" });
-      await User.findByIdAndUpdate(to, { status: "busy" });
+      // ✅ SET BOTH USERS BUSY WITH LASTSEEN TIMESTAMP
+      await User.findByIdAndUpdate(socket.userId, { status: "busy", lastSeen: new Date() });
+      await User.findByIdAndUpdate(to, { status: "busy", lastSeen: new Date() });
 
       // ✅ EMIT STATUS UPDATE
       io.emit("status-updated", { userId: socket.userId, status: "busy" });
