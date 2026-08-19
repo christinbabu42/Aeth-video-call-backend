@@ -7,7 +7,6 @@ const mongoose = require("mongoose"); // MUST BE AT TOP
 const multer = require("multer");
 const path = require("path");
 
-
 // ✅ STEP 2: Storage Configuration
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -57,7 +56,7 @@ router.post("/upload", upload.single("file"), (req, res) => {
   }
 });
 
-// GET total unread count for a specific user
+// GET total unread count for a specific user (total messages)
 router.get("/unread-count/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
@@ -76,6 +75,65 @@ router.get("/unread-count/:userId", async (req, res) => {
   } catch (err) {
     console.error("❌ Backend error in /unread-count:", err);
     res.status(500).json({ success: false, count: 0, error: err.message });
+  }
+});
+
+// ============================================================
+// GET TOTAL UNREAD CHAT COUNT
+// Counts unique conversations, NOT individual messages
+// ============================================================
+router.get("/unread-chats/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (!userId || !mongoose.Types.ObjectId.isValid(userId)) {
+      console.log("⚠️ Invalid userId for unread chats:", userId);
+
+      return res.status(400).json({
+        success: false,
+        message: "Invalid User ID",
+        count: 0,
+      });
+    }
+
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+
+    // Find all unread messages received by this user and group by senderId
+    const result = await Message.aggregate([
+      {
+        $match: {
+          receiverId: userObjectId,
+          isRead: false,
+        },
+      },
+      {
+        $group: {
+          _id: "$senderId",
+        },
+      },
+      {
+        $count: "unreadChats",
+      },
+    ]);
+
+    const count = result.length > 0 ? result[0].unreadChats : 0;
+
+    console.log(`🔔 Unread chats for ${userId}: ${count}`);
+
+    return res.json({
+      success: true,
+      count,
+    });
+
+  } catch (err) {
+    console.error("❌ Backend error in /unread-chats:", err);
+
+    return res.status(500).json({
+      success: false,
+      count: 0,
+      message: "Failed to calculate unread chat count",
+      error: err.message,
+    });
   }
 });
 
@@ -135,32 +193,32 @@ router.get("/conversations/:userId", async (req, res) => {
       },
       { $unwind: "$userDetails" },
 
-// ✅ Add this stage to control deleted users
-{
-  $addFields: {
-    "userDetails.name": {
-      $cond: [
-        { $eq: ["$userDetails.isDeleted", true] },
-        "User Deleted",
-        "$userDetails.name"
-      ]
-    },
-    "userDetails.nickname": {
-      $cond: [
-        { $eq: ["$userDetails.isDeleted", true] },
-        null,
-        "$userDetails.nickname"
-      ]
-    },
-    "userDetails.profilePic": {
-      $cond: [
-        { $eq: ["$userDetails.isDeleted", true] },
-        "/public/avatar.png",
-        "$userDetails.profilePic"
-      ]
-    }
-  }
-}
+      // ✅ Add this stage to control deleted users
+      {
+        $addFields: {
+          "userDetails.name": {
+            $cond: [
+              { $eq: ["$userDetails.isDeleted", true] },
+              "User Deleted",
+              "$userDetails.name"
+            ]
+          },
+          "userDetails.nickname": {
+            $cond: [
+              { $eq: ["$userDetails.isDeleted", true] },
+              null,
+              "$userDetails.nickname"
+            ]
+          },
+          "userDetails.profilePic": {
+            $cond: [
+              { $eq: ["$userDetails.isDeleted", true] },
+              "/public/avatar.png",
+              "$userDetails.profilePic"
+            ]
+          }
+        }
+      }
     ]);
 
     res.json({ success: true, conversations });
@@ -193,7 +251,7 @@ router.get("/:userId/:otherUserId", async (req, res) => {
   }
 });
 
-// Mark messages as read and NOTIFY SOCKET
+// Mark messages as read and NOTIFY SOCKET WITH UNREAD CHAT COUNT
 router.post("/mark-read", async (req, res) => {
   try {
     const { userId, otherUserId } = req.body;
@@ -202,31 +260,57 @@ router.post("/mark-read", async (req, res) => {
       return res.status(400).json({ success: false, message: "Missing IDs" });
     }
 
-    // 1️⃣ Mark messages as read
+    if (
+      !mongoose.Types.ObjectId.isValid(userId) ||
+      !mongoose.Types.ObjectId.isValid(otherUserId)
+    ) {
+      return res.status(400).json({ success: false, message: "Invalid IDs" });
+    }
+
+    // 1️⃣ Mark messages as read for this specific chat
     await Message.updateMany(
-      { senderId: otherUserId, receiverId: userId, isRead: false },
+      {
+        senderId: new mongoose.Types.ObjectId(otherUserId),
+        receiverId: new mongoose.Types.ObjectId(userId),
+        isRead: false
+      },
       { $set: { isRead: true } }
     );
 
-    // 2️⃣ Recalculate unread count
-    const unreadCount = await Message.countDocuments({
-      receiverId: userId,
-      isRead: false
-    });
+    // 2️⃣ Recalculate UNREAD CHAT count (distinct senders)
+    const unreadResult = await Message.aggregate([
+      {
+        $match: {
+          receiverId: new mongoose.Types.ObjectId(userId),
+          isRead: false,
+        },
+      },
+      {
+        $group: {
+          _id: "$senderId",
+        },
+      },
+      {
+        $count: "unreadChats",
+      },
+    ]);
 
-    // 3️⃣ Get socket instance
+    const unreadChatCount =
+      unreadResult.length > 0 ? unreadResult[0].unreadChats : 0;
+
+    // 3️⃣ Get socket instance & emit updated chat count
     const io = req.app.get("socketio");
 
     if (io) {
       io.to(String(userId)).emit("unread-count-updated", {
-        count: unreadCount
+        count: unreadChatCount,
       });
     }
 
-    res.json({ success: true });
+    res.json({ success: true, count: unreadChatCount });
 
   } catch (err) {
-    console.error("Mark-read error:", err);
+    console.error("❌ Mark-read error:", err);
     res.status(500).json({ success: false });
   }
 });
