@@ -74,16 +74,23 @@ router.get("/token", auth, async (req, res) => {
         status: "live",
       });
 
-      // 2️⃣ Create LiveStream session
-      const newStream = await LiveStream.create({
+      // 2️⃣ Reuse active stream or create a new LiveStream session to prevent duplicates
+      let activeStream = await LiveStream.findOne({
         hostId: req.user.id,
-        title: `${displayName}'s Live`,
-        status: "streaming",
-        startedAt: new Date(),
+        status: "streaming"
       });
 
-      // 🪙 START REWARD TIMER FOR HOST
-      startRewardTimer(newStream._id, req.user.id);
+      if (!activeStream) {
+        activeStream = await LiveStream.create({
+          hostId: req.user.id,
+          title: `${displayName}'s Live`,
+          status: "streaming",
+          startedAt: new Date(),
+        });
+
+        // 🪙 START REWARD TIMER FOR HOST (ONLY FOR NEW STREAM)
+        startRewardTimer(activeStream._id, req.user.id);
+      }
 
       // 3️⃣ Get Socket Instance (ONLY ONCE)
       const io = getIO(); 
@@ -101,7 +108,7 @@ router.get("/token", auth, async (req, res) => {
           hostId: req.user.id,
           hostName: displayName,
           hostPhoto: user.photo,
-          liveStreamId: newStream._id 
+          liveStreamId: activeStream._id 
         },
       });
     }
@@ -230,23 +237,30 @@ router.get("/active-rooms", auth, async (req, res) => {
 /**
  * 3. END/DELETE A ROOM
  */
-router.delete("/end-room/:roomName", async (req, res) => {
+router.delete("/end-room/:roomName", auth, async (req, res) => {
   try {
     const { roomName } = req.params;
 
-    try {
-      await roomService.deleteRoom(roomName);
-      console.log(`Room ${roomName} deleted successfully`);
-    } catch (err) {
-      if (err.code === "not_found" || err.status === 404) {
-        console.log(`Room ${roomName} already deleted (safe)`);
-      } else {
-        throw err;
-      }
-    }
-
     if (roomName.startsWith("live_")) {
       const hostId = roomName.replace("live_", "");
+
+      if (String(req.user.id) !== String(hostId)) {
+        return res.status(403).json({
+          success: false,
+          message: "Only the host can end this stream"
+        });
+      }
+
+      try {
+        await roomService.deleteRoom(roomName);
+        console.log(`Room ${roomName} deleted successfully`);
+      } catch (err) {
+        if (err.code === "not_found" || err.status === 404) {
+          console.log(`Room ${roomName} already deleted (safe)`);
+        } else {
+          throw err;
+        }
+      }
 
       await User.findByIdAndUpdate(hostId, {
         status: "online",
@@ -279,6 +293,17 @@ router.delete("/end-room/:roomName", async (req, res) => {
       io.emit("live-ended", {
         roomName,
       });
+    } else {
+      try {
+        await roomService.deleteRoom(roomName);
+        console.log(`Room ${roomName} deleted successfully`);
+      } catch (err) {
+        if (err.code === "not_found" || err.status === 404) {
+          console.log(`Room ${roomName} already deleted (safe)`);
+        } else {
+          throw err;
+        }
+      }
     }
 
     res.json({ success: true, message: "Room ended safely" });
