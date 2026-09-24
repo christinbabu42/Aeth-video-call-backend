@@ -1,14 +1,32 @@
-const { Server } = require("socket.io");
-const Message = require("./models/Message");
-const User = require("./models/User");
-const Call = require("./models/Call");
-const BlockedUser = require("./models/Block"); // adjust path if needed
+const User = require("./models/User"); 
+const Call = require("./models/Call"); 
+const BlockedUser = require("./models/Block");
+const LiveStream = require("./models/LiveStream");
 const jwt = require("jsonwebtoken");
+
+// 🪙 Live reward timer controls
+const {
+  stopRewardTimer
+} = require("./utils/liveRewardTimer");
+
+// 🎥 LiveKit server control
+const {
+  RoomServiceClient
+} = require("livekit-server-sdk");
 
 // Global timer map for reconnection grace periods (keyed by String(userId))
 const disconnectTimers = new Map();
 let ioInstance = null; // Ensuring instance is tracked
 let cleanupIntervalId = null; // Background cleanup interval reference
+
+// ==========================================
+// 🎥 LIVEKIT SERVER CONNECTION
+// ==========================================
+const roomService = new RoomServiceClient(
+  process.env.LIVEKIT_URL,
+  process.env.LIVEKIT_API_KEY,
+  process.env.LIVEKIT_API_SECRET
+);
 
 /**
  * ✅ HELPER: Check if a user has at least one active Socket.IO connection
@@ -54,6 +72,145 @@ const restoreOnlineIfConnected = async (userId) => {
   }
 };
 
+// ==========================================
+// 🔴 SERVER-AUTHORITATIVE LIVE CLEANUP
+// ==========================================
+const cleanupLiveForUser = async (userId, reason = "socket_disconnect") => {
+  try {
+    const userIdStr = String(userId);
+
+    console.log(
+      `🧹 Checking active live for disconnected user: ${userIdStr}`
+    );
+
+    // Find ALL active live streams for this host.
+    // Using find() instead of findOne() protects against
+    // accidentally-created duplicate streaming records.
+    const streams = await LiveStream.find({
+      hostId: userIdStr,
+      status: "streaming"
+    });
+
+    if (!streams || streams.length === 0) {
+      console.log(
+        `ℹ️ No active LiveStream found for ${userIdStr}`
+      );
+      return false;
+    }
+
+    console.log(
+      `🔴 Found ${streams.length} active live stream(s) for ${userIdStr}`
+    );
+
+    // The AethMeet room name is based on the host ID.
+    const roomName = `live_${userIdStr}`;
+
+    // ==========================================
+    // 1. DELETE LIVEKIT ROOM
+    // ==========================================
+    try {
+      await roomService.deleteRoom(roomName);
+
+      console.log(
+        `🗑️ LiveKit room deleted: ${roomName}`
+      );
+
+    } catch (err) {
+
+      if (
+        err.code === "not_found" ||
+        err.status === 404
+      ) {
+        console.log(
+          `ℹ️ LiveKit room already gone: ${roomName}`
+        );
+      } else {
+        console.error(
+          `❌ LiveKit room deletion failed:`,
+          err.message
+        );
+      }
+    }
+
+    // ==========================================
+    // 2. END ALL ACTIVE STREAM RECORDS
+    // ==========================================
+    for (const stream of streams) {
+
+      await LiveStream.findByIdAndUpdate(
+        stream._id,
+        {
+          status: "ended",
+          endedAt: new Date(),
+          currentViewers: 0
+        }
+      );
+
+      // ========================================
+      // 3. STOP REWARD TIMER
+      // ========================================
+      try {
+        stopRewardTimer(stream._id);
+
+        console.log(
+          `🛑 Reward timer stopped: ${stream._id}`
+        );
+
+      } catch (timerError) {
+
+        console.error(
+          `❌ Reward timer stop failed for ${stream._id}:`,
+          timerError.message
+        );
+      }
+    }
+
+    // ==========================================
+    // 4. RESTORE USER STATUS
+    // ==========================================
+    await User.findByIdAndUpdate(
+      userIdStr,
+      {
+        status: "online",
+        BigScreen: false,
+        lastSeen: new Date()
+      }
+    );
+
+    // ==========================================
+    // 5. NOTIFY CONNECTED USERS
+    // ==========================================
+    if (ioInstance) {
+
+      ioInstance.emit("status-updated", {
+        userId: userIdStr,
+        status: "online",
+        BigScreen: false
+      });
+
+      ioInstance.emit("live-ended", {
+        roomName,
+        hostId: userIdStr,
+        reason
+      });
+    }
+
+    console.log(
+      `✅ SERVER LIVE CLEANUP COMPLETE: ${roomName} | reason=${reason}`
+    );
+
+    return true;
+
+  } catch (error) {
+
+    console.error(
+      `❌ cleanupLiveForUser ERROR for ${userId}:`,
+      error
+    );
+
+    return false;
+  }
+};
 /**
  * ✅ Structure updated for JWT-based Auth, Auto-Joining & Server-Authoritative Cleanup
  */
@@ -433,18 +590,58 @@ const initSocket = (server, extraOptions = {}) => {
             return;
           }
 
-          // User has no remaining sockets -> mark OFFLINE
-          console.log(`🔴 ${userIdStr} is truly OFFLINE`);
+// ==========================================
+// 🔴 USER HAS NO REMAINING SOCKETS
+// ==========================================
+console.log(
+  `🔴 ${userIdStr} is truly OFFLINE`
+);
 
-          await User.findByIdAndUpdate(userIdStr, {
-            status: "offline",
-            lastSeen: new Date(),
-          });
+// ==========================================
+// 🎥 CHECK WHETHER THIS USER IS LIVE
+// ==========================================
+const activeLiveStreams = await LiveStream.find({
+  hostId: userIdStr,
+  status: "streaming"
+});
 
-          io.emit("status-updated", {
-            userId: userIdStr,
-            status: "offline",
-          });
+if (activeLiveStreams.length > 0) {
+
+  console.log(
+    `🚨 ${userIdStr} disconnected while LIVE`
+  );
+
+  console.log(
+    `🚨 Active live streams found: ${activeLiveStreams.length}`
+  );
+
+  // ========================================
+  // SERVER-AUTHORITATIVE LIVE CLEANUP
+  // ========================================
+  await cleanupLiveForUser(
+    userIdStr,
+    `socket_disconnect:${reason}`
+  );
+
+} else {
+
+  // ========================================
+  // NORMAL OFFLINE USER
+  // ========================================
+  await User.findByIdAndUpdate(userIdStr, {
+    status: "offline",
+    lastSeen: new Date(),
+  });
+
+  io.emit("status-updated", {
+    userId: userIdStr,
+    status: "offline",
+  });
+
+  console.log(
+    `🔴 ${userIdStr} → OFFLINE`
+  );
+}
 
           // Clean up any ongoing calls tied to this user
           const activeCalls = await Call.find({
