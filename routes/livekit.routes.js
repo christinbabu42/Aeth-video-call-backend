@@ -1,5 +1,9 @@
 const express = require("express");
-const { AccessToken, RoomServiceClient } = require("livekit-server-sdk");
+const {
+  AccessToken,
+  RoomServiceClient,
+  WebhookReceiver
+} = require("livekit-server-sdk");
 const auth = require("../middlewares/auth");
 const User = require("../models/User");
 const { getIO } = require("../socket");
@@ -22,14 +26,332 @@ const roomService = new RoomServiceClient(
 );
 
 // =========================
+// LIVEKIT WEBHOOK RECEIVER
+// =========================
+const webhookReceiver = new WebhookReceiver(
+  process.env.LIVEKIT_API_KEY,
+  process.env.LIVEKIT_API_SECRET
+);
+
+// Host disconnect grace timers
+const hostDisconnectTimers = new Map();
+
+// =========================
+// SERVER AUTHORITATIVE LIVE CLEANUP
+// =========================
+async function endLiveStreamOnServer(
+  roomName,
+  reason = "server_cleanup"
+) {
+  if (!roomName || !roomName.startsWith("live_")) {
+    return;
+  }
+
+  const hostId = roomName.replace("live_", "");
+
+  try {
+    console.log(
+      `🧹 SERVER LIVE CLEANUP: room=${roomName}, host=${hostId}, reason=${reason}`
+    );
+
+    // -----------------------------------------
+    // 1. Find active stream
+    // -----------------------------------------
+    const stream = await LiveStream.findOne({
+      hostId,
+      status: "streaming"
+    });
+
+    // -----------------------------------------
+    // 2. Delete LiveKit room
+    // -----------------------------------------
+    try {
+      await roomService.deleteRoom(roomName);
+
+      console.log(
+        `🗑️ LiveKit room ${roomName} deleted`
+      );
+    } catch (err) {
+      if (
+        err.code === "not_found" ||
+        err.status === 404
+      ) {
+        console.log(
+          `ℹ️ LiveKit room ${roomName} already deleted`
+        );
+      } else {
+        console.error(
+          `❌ LiveKit room deletion error:`,
+          err.message
+        );
+      }
+    }
+
+    // -----------------------------------------
+    // 3. End LiveStream in MongoDB
+    // -----------------------------------------
+    if (stream) {
+      await LiveStream.findByIdAndUpdate(
+        stream._id,
+        {
+          status: "ended",
+          endedAt: new Date(),
+          currentViewers: 0
+        }
+      );
+
+      // STOP HOST REWARD TIMER
+      try {
+        stopRewardTimer(stream._id);
+      } catch (timerError) {
+        console.error(
+          "❌ Reward timer stop error:",
+          timerError
+        );
+      }
+
+      console.log(
+        `💰 Reward timer stopped: ${stream._id}`
+      );
+    }
+
+    // -----------------------------------------
+    // 4. Restore host status
+    // -----------------------------------------
+    await User.findByIdAndUpdate(
+      hostId,
+      {
+        status: "online",
+        BigScreen: false,
+        lastSeen: new Date()
+      }
+    );
+
+    // -----------------------------------------
+    // 5. Notify connected users
+    // -----------------------------------------
+    const io = getIO();
+
+    io.emit("status-updated", {
+      userId: hostId,
+      status: "online",
+      BigScreen: false
+    });
+
+    io.emit("live-ended", {
+      roomName,
+      hostId,
+      reason
+    });
+
+    console.log(
+      `✅ SERVER LIVE CLEANUP COMPLETE: ${roomName}`
+    );
+
+  } catch (error) {
+    console.error(
+      `❌ SERVER LIVE CLEANUP ERROR:`,
+      error
+    );
+  }
+}
+
+// =========================
 // ROUTES
 // =========================
 
+// =========================
+// LIVEKIT WEBHOOK
+// =========================
+router.post(
+  "/webhook",
+  express.raw({
+    type: "application/webhook+json"
+  }),
+  async (req, res) => {
+    try {
+      const body = req.body.toString("utf8");
+
+      const event = await webhookReceiver.receive(
+        body,
+        req.get("Authorization")
+      );
+
+      console.log(
+        `📡 LIVEKIT WEBHOOK: ${event.event}`
+      );
+
+      // ==========================================
+      // HOST / PARTICIPANT JOINED
+      // ==========================================
+      if (event.event === "participant_joined") {
+        const roomName = event.room?.name;
+        const identity = event.participant?.identity;
+
+        if (roomName && identity) {
+          const timerKey =
+            `${roomName}:${identity}`;
+
+          if (hostDisconnectTimers.has(timerKey)) {
+            clearTimeout(
+              hostDisconnectTimers.get(timerKey)
+            );
+
+            hostDisconnectTimers.delete(timerKey);
+
+            console.log(
+              `♻️ Host reconnected. Cleanup cancelled: ${timerKey}`
+            );
+          }
+        }
+      }
+
+      // ==========================================
+      // PARTICIPANT LEFT / CONNECTION ABORTED
+      // ==========================================
+      if (
+        event.event === "participant_left" ||
+        event.event === "participant_connection_aborted"
+      ) {
+        const roomName = event.room?.name;
+        const identity = event.participant?.identity;
+
+        if (!roomName || !identity) {
+          return res.sendStatus(200);
+        }
+
+        // Only AethMeet live rooms
+        if (!roomName.startsWith("live_")) {
+          return res.sendStatus(200);
+        }
+
+        const hostId =
+          roomName.replace("live_", "");
+
+        // Ignore viewers
+        if (String(identity) !== String(hostId)) {
+          console.log(
+            `👤 Viewer left ${roomName}: ${identity}`
+          );
+
+          return res.sendStatus(200);
+        }
+
+        const timerKey =
+          `${roomName}:${identity}`;
+
+        // Clear previous timer
+        if (hostDisconnectTimers.has(timerKey)) {
+          clearTimeout(
+            hostDisconnectTimers.get(timerKey)
+          );
+        }
+
+        console.log(
+          `⚠️ HOST DISCONNECTED: ${roomName}`
+        );
+
+        // Give host 10 seconds to reconnect
+        const timer = setTimeout(
+          async () => {
+            hostDisconnectTimers.delete(
+              timerKey
+            );
+
+            try {
+              // Check LiveKit directly
+              const participants =
+                await roomService.listParticipants(
+                  roomName
+                );
+
+              const hostStillConnected =
+                participants.some(
+                  participant =>
+                    String(participant.identity) ===
+                    String(hostId)
+                );
+
+              if (hostStillConnected) {
+                console.log(
+                  `♻️ Host reconnected: ${roomName}`
+                );
+
+                return;
+              }
+
+              console.log(
+                `🚨 Host did not reconnect. Ending ${roomName}`
+              );
+
+              await endLiveStreamOnServer(
+                roomName,
+                event.event ===
+                  "participant_connection_aborted"
+                  ? "host_connection_aborted"
+                  : "host_left"
+              );
+
+            } catch (error) {
+              console.error(
+                `❌ Host connection check failed:`,
+                error
+              );
+
+              // Still clean up because
+              // LiveKit already reported host disconnect
+              await endLiveStreamOnServer(
+                roomName,
+                "host_disconnect_cleanup"
+              );
+            }
+          },
+          10000
+        );
+
+        hostDisconnectTimers.set(
+          timerKey,
+          timer
+        );
+      }
+
+      // ==========================================
+      // ROOM FINISHED
+      // ==========================================
+      if (event.event === "room_finished") {
+        const roomName = event.room?.name;
+
+        if (
+          roomName &&
+          roomName.startsWith("live_")
+        ) {
+          console.log(
+            `🏁 LIVEKIT ROOM FINISHED: ${roomName}`
+          );
+
+          await endLiveStreamOnServer(
+            roomName,
+            "room_finished"
+          );
+        }
+      }
+
+      return res.sendStatus(200);
+
+    } catch (error) {
+      console.error(
+        "❌ LiveKit webhook error:",
+        error
+      );
+
+      return res.sendStatus(401);
+    }
+  }
+);
+
 /**
  * 1. GENERATE LIVEKIT TOKEN
- * Handles room joining and host status updates
  */
-/* --- GET TOKEN ROUTE --- */
 router.get("/token", auth, async (req, res) => {
   try {
     const { role, room } = req.query;
@@ -74,23 +396,16 @@ router.get("/token", auth, async (req, res) => {
         status: "live",
       });
 
-      // 2️⃣ Reuse active stream or create a new LiveStream session to prevent duplicates
-      let activeStream = await LiveStream.findOne({
+      // 2️⃣ Create LiveStream session
+      const newStream = await LiveStream.create({
         hostId: req.user.id,
-        status: "streaming"
+        title: `${displayName}'s Live`,
+        status: "streaming",
+        startedAt: new Date(),
       });
 
-      if (!activeStream) {
-        activeStream = await LiveStream.create({
-          hostId: req.user.id,
-          title: `${displayName}'s Live`,
-          status: "streaming",
-          startedAt: new Date(),
-        });
-
-        // 🪙 START REWARD TIMER FOR HOST (ONLY FOR NEW STREAM)
-        startRewardTimer(activeStream._id, req.user.id);
-      }
+      // 🪙 START REWARD TIMER FOR HOST
+      startRewardTimer(newStream._id, req.user.id);
 
       // 3️⃣ Get Socket Instance (ONLY ONCE)
       const io = getIO(); 
@@ -108,7 +423,7 @@ router.get("/token", auth, async (req, res) => {
           hostId: req.user.id,
           hostName: displayName,
           hostPhoto: user.photo,
-          liveStreamId: activeStream._id 
+          liveStreamId: newStream._id 
         },
       });
     }
@@ -237,30 +552,32 @@ router.get("/active-rooms", auth, async (req, res) => {
 /**
  * 3. END/DELETE A ROOM
  */
-router.delete("/end-room/:roomName", auth, async (req, res) => {
+/**
+ * 3. END/DELETE A ROOM
+ */
+router.delete("/end-room/:roomName", async (req, res) => {
   try {
     const { roomName } = req.params;
 
+    // Call your server-side end stream function
+    await endLiveStreamOnServer(
+      roomName,
+      "frontend_end_room"
+    );
+
+    try {
+      await roomService.deleteRoom(roomName);
+      console.log(`Room ${roomName} deleted successfully`);
+    } catch (err) {
+      if (err.code === "not_found" || err.status === 404) {
+        console.log(`Room ${roomName} already deleted (safe)`);
+      } else {
+        throw err;
+      }
+    }
+
     if (roomName.startsWith("live_")) {
       const hostId = roomName.replace("live_", "");
-
-      if (String(req.user.id) !== String(hostId)) {
-        return res.status(403).json({
-          success: false,
-          message: "Only the host can end this stream"
-        });
-      }
-
-      try {
-        await roomService.deleteRoom(roomName);
-        console.log(`Room ${roomName} deleted successfully`);
-      } catch (err) {
-        if (err.code === "not_found" || err.status === 404) {
-          console.log(`Room ${roomName} already deleted (safe)`);
-        } else {
-          throw err;
-        }
-      }
 
       await User.findByIdAndUpdate(hostId, {
         status: "online",
@@ -293,17 +610,6 @@ router.delete("/end-room/:roomName", auth, async (req, res) => {
       io.emit("live-ended", {
         roomName,
       });
-    } else {
-      try {
-        await roomService.deleteRoom(roomName);
-        console.log(`Room ${roomName} deleted successfully`);
-      } catch (err) {
-        if (err.code === "not_found" || err.status === 404) {
-          console.log(`Room ${roomName} already deleted (safe)`);
-        } else {
-          throw err;
-        }
-      }
     }
 
     res.json({ success: true, message: "Room ended safely" });
