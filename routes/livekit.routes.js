@@ -165,9 +165,6 @@ async function endLiveStreamOnServer(
 // =========================
 router.post(
   "/webhook",
-  express.raw({
-    type: "application/webhook+json"
-  }),
   async (req, res) => {
     try {
       const body = req.body.toString("utf8");

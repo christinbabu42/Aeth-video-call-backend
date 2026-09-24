@@ -35,13 +35,36 @@ app.use(cors({
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
-app.use(express.json());
+// =========================
+// BODY PARSERS
+// =========================
+
+// ⚠️ IMPORTANT:
+// LiveKit webhook MUST be registered BEFORE express.json()
+// because LiveKit sends application/webhook+json and
+// WebhookReceiver needs the raw request body.
+
+// LiveKit webhook
+app.use(
+  "/api/livekit/webhook",
+  express.raw({
+    type: "application/webhook+json"
+  })
+);
+
+// Normal JSON requests
+app.use(express.json({ limit: "10mb" }));
+
+// URL encoded requests
+app.use(
+  express.urlencoded({
+    limit: "10mb",
+    extended: true
+  })
+);
 
 //multer media
-app.use('/public', express.static('public'));
-
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ limit: "10mb", extended: true }));
+app.use("/public", express.static("public"));
 
 
 // Routes
