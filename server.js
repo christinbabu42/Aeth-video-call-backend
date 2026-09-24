@@ -39,12 +39,30 @@ app.use(cors({
 // BODY PARSERS
 // =========================
 
-// ⚠️ IMPORTANT:
-// LiveKit webhook MUST be registered BEFORE express.json()
-// because LiveKit sends application/webhook+json and
-// WebhookReceiver needs the raw request body.
+// =========================
+// LIVEKIT WEBHOOK DEBUG
+// =========================
+app.use(
+  "/api/livekit/webhook",
+  (req, res, next) => {
+    console.log("🔥 LIVEKIT WEBHOOK REQUEST RECEIVED");
+    console.log(
+      "Webhook Content-Type:",
+      req.headers["content-type"]
+    );
+    console.log(
+      "Webhook Authorization:",
+      req.headers["authorization"]
+        ? "YES"
+        : "NO"
+    );
+    next();
+  }
+);
 
-// LiveKit webhook
+// =========================
+// LIVEKIT WEBHOOK RAW BODY
+// =========================
 app.use(
   "/api/livekit/webhook",
   express.raw({
@@ -52,10 +70,11 @@ app.use(
   })
 );
 
-// Normal JSON requests
+// =========================
+// NORMAL BODY PARSERS
+// =========================
 app.use(express.json({ limit: "10mb" }));
 
-// URL encoded requests
 app.use(
   express.urlencoded({
     limit: "10mb",
@@ -63,9 +82,8 @@ app.use(
   })
 );
 
-//multer media
+// multer media
 app.use("/public", express.static("public"));
-
 
 // Routes
 app.use("/api/auth", googleAuthRoutes);
